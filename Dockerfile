@@ -14,7 +14,7 @@ COPY src ./src
 RUN cargo build --release
 
 # --- Runtime ---
-FROM gcr.io/distroless/base-debian12:nonroot AS runtime
+FROM gcr.io/distroless/cc-debian12:nonroot AS runtime
 WORKDIR /app
 
 COPY --from=builder /app/target/release/weatherust /app/weatherust
