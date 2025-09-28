@@ -28,8 +28,8 @@ services:
       ofelia.job-run.weatherust.schedule: "0 30 5 * * *"
       # Image to run for the scheduled job
       ofelia.job-run.weatherust.image: "ghcr.io/jsprague84/weatherust:latest"
-      # CLI args — set default ZIP 52726
-      ofelia.job-run.weatherust.args: "--zip 52726 --units imperial --quiet"
+      # CLI args — rely on .env defaults (DEFAULT_ZIP/DEFAULT_LOCATION/DEFAULT_UNITS)
+      ofelia.job-run.weatherust.args: "--quiet"
       # Pass secrets/env to the one-off job container
       ofelia.job-run.weatherust.env.OWM_API_KEY: "${OWM_API_KEY}"
       ofelia.job-run.weatherust.env.GOTIFY_KEY: "${GOTIFY_KEY}"
