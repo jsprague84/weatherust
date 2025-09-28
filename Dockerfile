@@ -21,4 +21,3 @@ COPY --from=builder /app/target/release/weatherust /app/weatherust
 
 ENV RUST_LOG=info
 ENTRYPOINT ["/app/weatherust"]
-CMD ["--help"]
