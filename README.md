@@ -22,7 +22,7 @@
 
 - Compose (preferred):
   - Ensure `.env` exists with secrets.
-  - The stack uses `ghcr.io/jsprague84/weatherust:latest` by default.
+  - The stack uses `ghcr.io/jsprague84/weatherust:latest` by default. For production, pin a release tag (see below).
   - Pull/update and start: `docker compose pull && docker compose up -d`
   - Manual run (ad-hoc): `docker compose run --rm weatherust --zip 52726 --units imperial --quiet`
 
@@ -34,8 +34,10 @@
   - Timezone: `America/Chicago`.
 - Configure secrets in `.env`:
   - `OWM_API_KEY`, `GOTIFY_KEY`, `GOTIFY_URL`.
+  - Optional defaults: `DEFAULT_ZIP` or `DEFAULT_LOCATION`, and `DEFAULT_UNITS`.
+    - If CLI flags are omitted, the app uses these defaults; `DEFAULT_ZIP` takes precedence over `DEFAULT_LOCATION`.
 - Start the stack:
-  - `docker compose up -d --build` (builds `weatherust:local` and starts Ofelia)
+  - `docker compose up -d`
 - Logs:
   - `docker compose logs -f ofelia` (shows job runs and any errors)
 
@@ -48,11 +50,23 @@ Adjusting schedule:
 
 - This repo includes `.github/workflows/docker.yml` to build and publish a multi-arch Docker image to GHCR.
 - Steps:
-  - Create a GitHub repository named `weatherust` and push this repo.
-  - Ensure the repository visibility is set as desired.
-  - After pushing to default branch, CI will publish `ghcr.io/<org-or-user>/weatherust:latest`.
+  - Push to `main` to publish `ghcr.io/jsprague84/weatherust:latest`.
+  - Create a tag like `v0.1.0` to also publish `ghcr.io/jsprague84/weatherust:v0.1.0`.
   - docker-compose here is already set to `ghcr.io/jsprague84/weatherust:latest` for both the service and Ofelia job.
   - If the GHCR package is private, configure a registry login on the host running compose.
+
+**Releases and Version Pinning**
+
+- Recommended for stability: pin to a published release tag instead of `latest`.
+- In `docker-compose.yml` change both references:
+  - `weatherust.image: ghcr.io/jsprague84/weatherust:v0.1.0`
+  - `ofelia.job-run.weatherust.image: ghcr.io/jsprague84/weatherust:v0.1.0`
+- Apply: `docker compose pull && docker compose up -d`
+
+**Notes**
+
+- Runtime image is distroless (cc variant) on Debian 12, running as non-root, which includes required libgcc runtime.
+- Toolchain pinned to Rust 1.90.0 for reproducible builds.
 
 **Security/Secrets**
 
@@ -64,5 +78,20 @@ Adjusting schedule:
 - Flags:
   - `--zip <ZIP[,CC]>` e.g., `52726` or `52726,US`.
   - `--location <free-form>` e.g., `Davenport,IA,US`.
-  - `--units <imperial|metric>` (default `imperial`).
+  - `--units <imperial|metric>` (default `DEFAULT_UNITS` or `imperial`).
   - `--quiet` suppresses stdout (useful in scheduled runs).
+
+Environment defaults:
+- `DEFAULT_ZIP` or `DEFAULT_LOCATION` provide a default location when CLI flags are not set.
+- `DEFAULT_UNITS` sets default units when `--units` is not specified.
+- If neither CLI nor env provide a location, the app prompts interactively.
+
+**Ideas for Future Enhancements**
+
+- Resilience: retry/backoff for transient HTTP errors; clearer non-zero exit on fatal failures (for monitoring).
+- Severe weather: optional alert mode (high Gotify priority) if daily description matches severe conditions.
+- Config: accept defaults via env (e.g., `DEFAULT_ZIP`, `DEFAULT_UNITS`) to reduce args in compose labels.
+- Output: compact vs verbose templates; optional emoji/icons; configurable Gotify priority/title.
+- Multi-location: support multiple ZIPs/locations in one run with aggregated message.
+- Logging/metrics: structured logs and a simple success/failure metric (stdout) for scraping.
+- Tests/CI: add unit tests around parsing/formatting and a lint step in Actions.

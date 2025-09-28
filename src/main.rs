@@ -20,9 +20,9 @@ struct Args {
     #[arg(long)]
     location: Option<String>,
 
-    /// Units: "imperial" (°F) or "metric" (°C). Default: imperial
-    #[arg(long, default_value = "imperial")]
-    units: String,
+    /// Units: "imperial" (°F) or "metric" (°C). If omitted, uses DEFAULT_UNITS env or falls back to "imperial".
+    #[arg(long)]
+    units: Option<String>,
 
     /// If set, don't print to stdout; only send Gotify
     #[arg(long, default_value_t = false)]
@@ -89,8 +89,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let api_key = env::var("OWM_API_KEY").expect("Missing OWM_API_KEY in environment or .env file");
 
-    // Units: "imperial" (°F) or "metric" (°C)
-    let units = args.units.as_str();
+    // Units: CLI flag -> DEFAULT_UNITS env -> "imperial"
+    let units = args
+        .units
+        .clone()
+        .or_else(|| env::var("DEFAULT_UNITS").ok())
+        .unwrap_or_else(|| "imperial".to_string())
+        .to_lowercase();
 
     // Create one HTTP client for all requests
     let client = Client::new();
@@ -190,12 +195,25 @@ async fn resolve_location(
     api_key: &str,
     args: &Args,
 ) -> Result<(f64, f64, String), Box<dyn std::error::Error>> {
+    // Highest priority: explicit CLI flags
     if let Some(zip) = args.zip.as_deref() {
         return geocode_zip(client, api_key, zip).await;
     }
 
     if let Some(loc) = args.location.as_deref() {
         return geocode_location(client, api_key, loc).await;
+    }
+
+    // Next: environment-provided defaults
+    if let Ok(zip) = env::var("DEFAULT_ZIP") {
+        if !zip.trim().is_empty() {
+            return geocode_zip(client, api_key, zip.trim()).await;
+        }
+    }
+    if let Ok(loc) = env::var("DEFAULT_LOCATION") {
+        if !loc.trim().is_empty() {
+            return geocode_location(client, api_key, loc.trim()).await;
+        }
     }
 
     // Interactive fallback if no flags provided
