@@ -2,7 +2,7 @@
 
 - Rust CLI that pulls current weather and 7-day outlook from OpenWeatherMap and optionally sends a Gotify notification.
 - Supports ZIP or free-form location (e.g., "City,ST,US").
-- Designed to run non-interactively under cron or systemd timers.
+- Designed to run non-interactively in Docker, scheduled by Ofelia (no host cron/systemd required).
 
 **Prerequisites**
 
@@ -17,6 +17,7 @@
 - Examples:
   - `./target/release/weatherust --zip 52726 --units imperial`
   - `./target/release/weatherust --location "Davenport,IA,US" --units metric --quiet`
+ - Note: Local runs are primarily for development and testing; production deployments should use the Docker + Ofelia stack below.
 
 **Docker**
 
