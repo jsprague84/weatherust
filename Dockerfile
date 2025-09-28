@@ -1,6 +1,6 @@
 # Multi-stage build to produce a small runtime image
 
-FROM rust:1.83-bookworm AS builder
+FROM rust:1.90-bookworm AS builder
 WORKDIR /app
 
 # Build dependencies (openssl for historical lockfiles; harmless if unused)

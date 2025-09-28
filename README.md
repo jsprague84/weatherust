@@ -8,6 +8,7 @@
 
 - OpenWeatherMap API key (`OWM_API_KEY`).
 - Gotify server app key (`GOTIFY_KEY`) and message endpoint URL (`GOTIFY_URL`).
+- Toolchain: Rust 1.90.0 (pinned via `rust-toolchain.toml`).
 
 **Local Run**
 
