@@ -4,6 +4,13 @@
 - Supports ZIP or free-form location (e.g., "City,ST,US").
 - Designed to run non-interactively in Docker, scheduled by Ofelia (no host cron/systemd required).
 
+**Quick Start**
+
+- Copy env and fill keys: `cp .env.example .env` (set `OWM_API_KEY`, `GOTIFY_KEY`, `GOTIFY_URL`; optional `DEFAULT_ZIP`, `DEFAULT_UNITS`).
+- Start stack: `docker compose pull && docker compose up -d`
+- Verify scheduler: `docker compose logs -f ofelia`
+
+
 **Prerequisites**
 
 - OpenWeatherMap API key (`OWM_API_KEY`).
