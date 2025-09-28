@@ -9,6 +9,7 @@
 - Copy env and fill keys: `cp .env.example .env` (set `OWM_API_KEY`, `GOTIFY_KEY`, `GOTIFY_URL`; optional `DEFAULT_ZIP`, `DEFAULT_UNITS`).
 - Start stack: `docker compose pull && docker compose up -d`
 - Verify scheduler: `docker compose logs -f ofelia`
+- Test once now: `docker compose run --rm weatherust` (uses `DEFAULT_*` from `.env`; add `--zip 52726 --units imperial` if not set)
 
 
 **Prerequisites**
