@@ -8,13 +8,8 @@ RUN apt-get update \
     && apt-get install -y --no-install-recommends pkg-config libssl-dev ca-certificates \
     && rm -rf /var/lib/apt/lists/*
 
-# Cache deps
+# Copy full source and build (simpler, more reliable in CI)
 COPY Cargo.toml Cargo.lock ./
-# Prefetch dependencies to leverage layer caching without compiling them
-RUN mkdir -p src && echo "fn main(){}" > src/main.rs \
-    && cargo fetch
-
-# Build
 COPY src ./src
 RUN cargo build --release
 
