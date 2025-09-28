@@ -10,9 +10,9 @@ RUN apt-get update \
 
 # Cache deps
 COPY Cargo.toml Cargo.lock ./
+# Prefetch dependencies to leverage layer caching without compiling them
 RUN mkdir -p src && echo "fn main(){}" > src/main.rs \
-    && cargo build --release \
-    && rm -rf target/release/deps/weatherust*
+    && cargo fetch
 
 # Build
 COPY src ./src
