@@ -45,6 +45,7 @@
   - `OWM_API_KEY`, `GOTIFY_KEY`, `GOTIFY_URL`.
   - Optional defaults: `DEFAULT_ZIP` or `DEFAULT_LOCATION`, and `DEFAULT_UNITS`.
     - If CLI flags are omitted, the app uses these defaults; `DEFAULT_ZIP` takes precedence over `DEFAULT_LOCATION`.
+  - Note: Ofelia’s job-run containers do not inherit the service’s `env_file`; this compose passes the needed env vars explicitly via labels.
 - Start the stack:
   - `docker compose up -d`
 - Logs:

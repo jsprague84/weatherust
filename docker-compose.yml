@@ -34,3 +34,7 @@ services:
       ofelia.job-run.weatherust.env.OWM_API_KEY: "${OWM_API_KEY}"
       ofelia.job-run.weatherust.env.GOTIFY_KEY: "${GOTIFY_KEY}"
       ofelia.job-run.weatherust.env.GOTIFY_URL: "${GOTIFY_URL}"
+      # Pass optional defaults used by the app when no CLI flags are set
+      ofelia.job-run.weatherust.env.DEFAULT_ZIP: "${DEFAULT_ZIP}"
+      ofelia.job-run.weatherust.env.DEFAULT_LOCATION: "${DEFAULT_LOCATION}"
+      ofelia.job-run.weatherust.env.DEFAULT_UNITS: "${DEFAULT_UNITS}"
