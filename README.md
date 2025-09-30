@@ -86,6 +86,14 @@ Adjusting schedule:
 
 - `.env` is gitignored. Do not commit real API keys.
 - If keys were previously committed, rotate them in OWM and Gotify.
+- You can provide the Gotify app key via an env var (`GOTIFY_KEY`) or a file path (`GOTIFY_KEY_FILE`).
+- Example with Docker: mount a secret file and set `GOTIFY_KEY_FILE` to that path.
+
+Example (Docker secrets-style mounting):
+- Create a file with only the key, e.g., `/opt/secrets/gotify_key`.
+- Mount it into the job container and set `GOTIFY_KEY_FILE` via Ofelia labels:
+  - `ofelia.job-run.weatherust.volume=/opt/secrets/gotify_key:/run/secrets/gotify_key:ro`
+  - `ofelia.job-run.weatherust.env=GOTIFY_KEY_FILE=/run/secrets/gotify_key|...`
 
 **CLI Reference**
 
