@@ -39,13 +39,17 @@
 
 - The compose stack includes an `ofelia` service that schedules a one-off run at 05:30 daily.
 - Defaults in compose:
-  - Location: ZIP `52726` with `--units imperial --quiet`.
+  - Location: ZIP `52726`, `--units imperial --quiet` passed as `command`.
   - Timezone: `America/Chicago`.
-- Configure secrets in `.env`:
+- Configure secrets in `.env` (same directory as compose):
   - `OWM_API_KEY`, `GOTIFY_KEY`, `GOTIFY_URL`.
   - Optional defaults: `DEFAULT_ZIP` or `DEFAULT_LOCATION`, and `DEFAULT_UNITS`.
     - If CLI flags are omitted, the app uses these defaults; `DEFAULT_ZIP` takes precedence over `DEFAULT_LOCATION`.
-  - Note: Ofelia’s job-run containers do not inherit the service’s `env_file`; this compose passes the needed env vars explicitly via labels.
+- How env is passed to the job:
+  - Ofelia job-run does not inherit the service’s `env_file`.
+  - This compose uses a single `env` label with pipe-separated `KEY=VALUE` pairs expanded from `.env`.
+  - It also mounts your `.env` into the job container at `/app/.env` so the app’s dotenv loader can read it.
+  - Update the absolute host path for the volume label to your environment.
 - Start the stack:
   - `docker compose up -d`
 - Logs:

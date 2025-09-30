@@ -1,17 +1,9 @@
 services:
   weatherust:
-    # Use published image from GHCR
     image: ghcr.io/jsprague84/weatherust:latest
     env_file:
       - .env
-    # For manual runs only; Ofelia schedules job-run below
-    # Example: docker compose run --rm weatherust --zip 52726 --units imperial --quiet
     restart: "no"
-    deploy:
-      resources:
-        limits:
-          cpus: '0.50'
-          memory: 256M
 
   ofelia:
     image: mcuadros/ofelia:latest
@@ -23,18 +15,10 @@ services:
       - /var/run/docker.sock:/var/run/docker.sock:ro
     command: daemon --docker
     labels:
-      ofelia.enabled: "true"
-      # Schedule: second minute hour day month weekday (container timezone)
-      ofelia.job-run.weatherust.schedule: "0 30 5 * * *"
-      # Image to run for the scheduled job
-      ofelia.job-run.weatherust.image: "ghcr.io/jsprague84/weatherust:latest"
-      # CLI args — rely on .env defaults (DEFAULT_ZIP/DEFAULT_LOCATION/DEFAULT_UNITS)
-      ofelia.job-run.weatherust.args: "--quiet"
-      # Pass secrets/env to the one-off job container
-      ofelia.job-run.weatherust.env.OWM_API_KEY: "${OWM_API_KEY}"
-      ofelia.job-run.weatherust.env.GOTIFY_KEY: "${GOTIFY_KEY}"
-      ofelia.job-run.weatherust.env.GOTIFY_URL: "${GOTIFY_URL}"
-      # Pass optional defaults used by the app when no CLI flags are set
-      ofelia.job-run.weatherust.env.DEFAULT_ZIP: "${DEFAULT_ZIP}"
-      ofelia.job-run.weatherust.env.DEFAULT_LOCATION: "${DEFAULT_LOCATION}"
-      ofelia.job-run.weatherust.env.DEFAULT_UNITS: "${DEFAULT_UNITS}"
+      - "ofelia.enabled=true"
+      - "ofelia.job-run.weatherust.schedule=0 30 5 * * *"
+      - "ofelia.job-run.weatherust.image=ghcr.io/jsprague84/weatherust:latest"
+      - "ofelia.job-run.weatherust.command=--zip 52726 --units imperial --quiet"
+      - "ofelia.job-run.weatherust.env=OWM_API_KEY=${OWM_API_KEY}|GOTIFY_KEY=${GOTIFY_KEY}|GOTIFY_URL=${GOTIFY_URL}|DEFAULT_ZIP=${DEFAULT_ZIP}|DEFAULT_UNITS=${DEFAULT_UNITS}"
+      # CHANGE TO YOUR .env ABSOLUTE PATH ON THE HOST
+      - "ofelia.job-run.weatherust.volume=/home/ubuntu/docker-compose/weatherust/.env:/app/.env:ro"
