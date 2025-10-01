@@ -136,3 +136,5 @@ Publish images (CI):
 - Weather image is built by `.github/workflows/docker.yml` -> `ghcr.io/<owner>/weatherust`.
 - Speedtest image is built by `.github/workflows/docker-speedynotify.yml` -> `ghcr.io/<owner>/speedynotify`.
 - After first successful publish, make the GHCR package public in GitHub Packages so compose hosts can pull without auth.
+
+ 
