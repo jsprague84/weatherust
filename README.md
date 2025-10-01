@@ -137,4 +137,12 @@ Publish images (CI):
 - Speedtest image is built by `.github/workflows/docker-speedynotify.yml` -> `ghcr.io/<owner>/speedynotify`.
 - After first successful publish, make the GHCR package public in GitHub Packages so compose hosts can pull without auth.
 
+**Scaffolding New Features**
+
+- To create another small feature that sends messages to Gotify, use the scaffold:
+  - `scripts/scaffold_feature.sh <name> "Short description"`
+  - Then implement `<name>/src/main.rs`, and adjust `Dockerfile.<name>` if OS deps are needed.
+  - A GitHub Action is generated at `.github/workflows/docker-<name>.yml` to publish `ghcr.io/<owner>/<name>`.
+  - See `FEATURES.md` for details and the Ofelia label pattern to schedule your new image.
+
  
