@@ -5,6 +5,13 @@ services:
       - .env
     restart: "no"
 
+  # Optional: Speedtest notifier service (image published separately)
+  speedynotify:
+    image: ghcr.io/jsprague84/speedynotify:latest
+    env_file:
+      - .env
+    restart: "no"
+
   ofelia:
     image: mcuadros/ofelia:latest
     container_name: ofelia
@@ -20,5 +27,13 @@ services:
       - "ofelia.job-run.weatherust.image=ghcr.io/jsprague84/weatherust:latest"
       - "ofelia.job-run.weatherust.command=--zip 52726 --units imperial --quiet"
       - "ofelia.job-run.weatherust.env=OWM_API_KEY=${OWM_API_KEY}|GOTIFY_KEY=${GOTIFY_KEY}|GOTIFY_URL=${GOTIFY_URL}|DEFAULT_ZIP=${DEFAULT_ZIP}|DEFAULT_UNITS=${DEFAULT_UNITS}"
-      # CHANGE TO YOUR .env ABSOLUTE PATH ON THE HOST
-      - "ofelia.job-run.weatherust.volume=/home/ubuntu/docker-compose/weatherust/.env:/app/.env:ro"
+      # Mount your host .env into the job container so dotenv works there too
+      # Set ENV_FILE_HOST_PATH in .env to an absolute host path
+      - "ofelia.job-run.weatherust.volume=${ENV_FILE_HOST_PATH}:/app/.env:ro"
+
+      # Speedtest daily at 02:10 (disabled until image exists)
+      - "ofelia.job-run.speedynotify.schedule=0 10 2 * * *"
+      - "ofelia.job-run.speedynotify.image=ghcr.io/jsprague84/speedynotify:latest"
+      - "ofelia.job-run.speedynotify.command=--quiet --min-down ${SPEEDTEST_MIN_DOWN} --min-up ${SPEEDTEST_MIN_UP}"
+      - "ofelia.job-run.speedynotify.env=GOTIFY_KEY=${SPEEDY_GOTIFY_KEY}|GOTIFY_URL=${GOTIFY_URL}|SPEEDTEST_MIN_DOWN=${SPEEDTEST_MIN_DOWN}|SPEEDTEST_MIN_UP=${SPEEDTEST_MIN_UP}|SPEEDTEST_SERVER_ID=${SPEEDTEST_SERVER_ID}"
+      - "ofelia.job-run.speedynotify.volume=${ENV_FILE_HOST_PATH}:/app/.env:ro"

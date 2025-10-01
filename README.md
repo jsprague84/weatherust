@@ -49,7 +49,7 @@
   - Ofelia job-run does not inherit the service’s `env_file`.
   - This compose uses a single `env` label with pipe-separated `KEY=VALUE` pairs expanded from `.env`.
   - It also mounts your `.env` into the job container at `/app/.env` so the app’s dotenv loader can read it.
-  - Update the absolute host path for the volume label to your environment.
+  - Set `ENV_FILE_HOST_PATH` in `.env` to the absolute host path of your `.env` file (used by the Ofelia volume label).
 - Start the stack:
   - `docker compose up -d`
 - Logs:
@@ -117,3 +117,22 @@ Environment defaults:
 - Multi-location: support multiple ZIPs/locations in one run with aggregated message.
 - Logging/metrics: structured logs and a simple success/failure metric (stdout) for scraping.
 - Tests/CI: add unit tests around parsing/formatting and a lint step in Actions.
+
+**Additional Tools (Workspace)**
+
+This repo is now a Rust workspace with a shared helper crate. A second binary, `speedynotify`, runs the Ookla Speedtest CLI and sends a Gotify summary.
+
+- Enable in compose:
+  - Image: `ghcr.io/jsprague84/speedynotify:latest` (publish separately).
+  - Ofelia labels included for a daily run at 02:10.
+  - Configure thresholds in `.env`: `SPEEDTEST_MIN_DOWN`, `SPEEDTEST_MIN_UP`, optional `SPEEDTEST_SERVER_ID`.
+  - Reuses the same `GOTIFY_*` envs and `.env` mount via `ENV_FILE_HOST_PATH`.
+
+Build locally:
+- Weather: `docker build -t weatherust:local .`
+- Speedtest: `docker build -f Dockerfile.speedynotify -t speedynotify:local .`
+
+Publish images (CI):
+- Weather image is built by `.github/workflows/docker.yml` -> `ghcr.io/<owner>/weatherust`.
+- Speedtest image is built by `.github/workflows/docker-speedynotify.yml` -> `ghcr.io/<owner>/speedynotify`.
+- After first successful publish, make the GHCR package public in GitHub Packages so compose hosts can pull without auth.

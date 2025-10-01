@@ -11,6 +11,7 @@ RUN apt-get update \
 # Copy full source and build (simpler, more reliable in CI)
 COPY Cargo.toml Cargo.lock ./
 COPY src ./src
+COPY common ./common
 RUN cargo build --release
 
 # --- Runtime ---

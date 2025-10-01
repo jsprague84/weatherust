@@ -1,0 +1,25 @@
+# Build speedynotify and package with Ookla speedtest CLI
+
+FROM rust:1.90-bookworm AS builder
+WORKDIR /app
+
+COPY Cargo.toml Cargo.lock ./
+COPY common ./common
+COPY speedynotify ./speedynotify
+RUN cargo build -p speedynotify --release
+
+FROM debian:12-slim AS runtime
+WORKDIR /app
+
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends curl gnupg ca-certificates \
+    && curl -fsSL https://packagecloud.io/install/repositories/ookla/speedtest-cli/script.deb.sh | bash \
+    && apt-get update \
+    && apt-get install -y --no-install-recommends speedtest \
+    && rm -rf /var/lib/apt/lists/*
+
+COPY --from=builder /app/target/release/speedynotify /app/speedynotify
+
+ENV RUST_LOG=info
+ENTRYPOINT ["/app/speedynotify"]
+

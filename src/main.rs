@@ -3,7 +3,7 @@ use std::io::{self, Write};
 
 use chrono::{FixedOffset, TimeZone};
 use clap::Parser;
-use dotenvy::dotenv;
+use common::{dotenv_init, send_gotify};
 use reqwest::Client;
 use serde::Deserialize;
 
@@ -83,7 +83,7 @@ struct Weather {
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    dotenv().ok(); // load .env if present
+    dotenv_init(); // load .env if present
 
     let args = Args::parse();
 
@@ -313,44 +313,4 @@ fn normalize_city_query(input: &str) -> String {
     }
 }
 
-async fn send_gotify(
-    client: &Client,
-    title: &str,
-    body: &str,
-) -> Result<(), Box<dyn std::error::Error>> {
-    let gotify_url =
-        env::var("GOTIFY_URL").unwrap_or_else(|_| "http://localhost:8080/message".to_string());
-    // Prefer GOTIFY_KEY, or fall back to reading from GOTIFY_KEY_FILE if provided
-    let gotify_key = match env::var("GOTIFY_KEY") {
-        Ok(v) => v,
-        Err(_) => {
-            if let Ok(path) = env::var("GOTIFY_KEY_FILE") {
-                match std::fs::read_to_string(&path) {
-                    Ok(s) => s.trim().to_string(),
-                    Err(e) => {
-                        eprintln!("GOTIFY_KEY_FILE read error from {}: {}", path, e);
-                        return Ok(());
-                    }
-                }
-            } else {
-                // If not configured, just skip without failing whole run.
-                eprintln!("GOTIFY_KEY not set; skipping Gotify notification.");
-                return Ok(());
-            }
-        }
-    };
-
-    client
-        .post(&gotify_url)
-        .header("X-Gotify-Key", gotify_key)
-        .json(&serde_json::json!({
-            "title": title,
-            "message": body,
-            "priority": 5
-        }))
-        .send()
-        .await?
-        .error_for_status()?;
-
-    Ok(())
-}
+// moved to common::send_gotify
