@@ -4,6 +4,7 @@ WORKDIR /app
 COPY Cargo.toml Cargo.lock ./
 COPY src ./src
 COPY common ./common
+COPY speedynotify ./speedynotify
 COPY dockermon ./dockermon
 RUN cargo build -p dockermon --release
 
@@ -14,4 +15,3 @@ COPY --from=builder /app/target/release/dockermon /app/dockermon
 
 ENV RUST_LOG=info
 ENTRYPOINT ["/app/dockermon"]
-
