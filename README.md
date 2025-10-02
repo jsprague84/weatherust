@@ -128,6 +128,8 @@ Environment defaults:
 
 This repo is now a Rust workspace with a shared helper crate. A second binary, `speedynotify`, runs the Ookla Speedtest CLI and sends a Gotify summary.
 
+Added: `dockermon` — checks Docker containers for health issues and high CPU/MEM and sends a Gotify summary. Designed for Ofelia to run every 5 minutes.
+
 - Enable in compose:
   - Image: `ghcr.io/jsprague84/speedynotify:latest` (publish separately).
   - Ofelia labels included for a daily run at 02:10.
@@ -137,10 +139,12 @@ This repo is now a Rust workspace with a shared helper crate. A second binary, `
 Build locally:
 - Weather: `docker build -t weatherust:local .`
 - Speedtest: `docker build -f Dockerfile.speedynotify -t speedynotify:local .`
+ - Docker monitor: `docker build -f Dockerfile.dockermon -t dockermon:local .`
 
 Publish images (CI):
 - Weather image is built by `.github/workflows/docker.yml` -> `ghcr.io/<owner>/weatherust`.
 - Speedtest image is built by `.github/workflows/docker-speedynotify.yml` -> `ghcr.io/<owner>/speedynotify`.
+ - Docker monitor image is built by `.github/workflows/docker-dockermon.yml` -> `ghcr.io/<owner>/dockermon`.
 - After first successful publish, make the GHCR package public in GitHub Packages so compose hosts can pull without auth.
 
 **Scaffolding New Features**
@@ -150,5 +154,17 @@ Publish images (CI):
   - Then implement `<name>/src/main.rs`, and adjust `Dockerfile.<name>` if OS deps are needed.
   - A GitHub Action is generated at `.github/workflows/docker-<name>.yml` to publish `ghcr.io/<owner>/<name>`.
   - See `FEATURES.md` for details and the Ofelia label pattern to schedule your new image.
+
+**Docker Monitor (dockermon)**
+
+- Purpose: Alert when any container is not running, has failing health, or exceeds CPU/MEM thresholds.
+- Env:
+  - `HEALTH_NOTIFY_ALWAYS` (default `false`) — notify even when all OK.
+  - `CPU_WARN_PCT` (default `85`) — CPU percentage threshold.
+  - `MEM_WARN_PCT` (default `90`) — memory percentage threshold.
+- Compose integration:
+  - Service mounts the Docker socket read-only.
+  - Ofelia job runs every 5 minutes and mounts the socket via label volume.
+  - Tag override: set `DOCKERMON_TAG` in `.env` for pre-merge testing.
 
  

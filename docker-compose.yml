@@ -12,6 +12,15 @@ services:
       - .env
     restart: "no"
 
+  # Docker monitor: checks container health and CPU/MEM thresholds
+  dockermon:
+    image: ghcr.io/jsprague84/dockermon:${DOCKERMON_TAG:-latest}
+    env_file:
+      - .env
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    restart: "no"
+
   ofelia:
     image: mcuadros/ofelia:latest
     container_name: ofelia
@@ -37,3 +46,10 @@ services:
       - "ofelia.job-run.speedynotify.command=--quiet --min-down ${SPEEDTEST_MIN_DOWN} --min-up ${SPEEDTEST_MIN_UP}"
       - "ofelia.job-run.speedynotify.env=GOTIFY_KEY=${SPEEDY_GOTIFY_KEY}|GOTIFY_URL=${GOTIFY_URL}|SPEEDTEST_MIN_DOWN=${SPEEDTEST_MIN_DOWN}|SPEEDTEST_MIN_UP=${SPEEDTEST_MIN_UP}|SPEEDTEST_SERVER_ID=${SPEEDTEST_SERVER_ID}"
       - "ofelia.job-run.speedynotify.volume=${ENV_FILE_HOST_PATH}:/app/.env:ro"
+
+      # Docker monitor every 5 minutes
+      - "ofelia.job-run.dockermon.schedule=0 */5 * * * *"
+      - "ofelia.job-run.dockermon.image=ghcr.io/jsprague84/dockermon:${DOCKERMON_TAG:-latest}"
+      - "ofelia.job-run.dockermon.command=--quiet"
+      - "ofelia.job-run.dockermon.env=GOTIFY_KEY=${GOTIFY_KEY}|GOTIFY_URL=${GOTIFY_URL}|HEALTH_NOTIFY_ALWAYS=${HEALTH_NOTIFY_ALWAYS}|CPU_WARN_PCT=${CPU_WARN_PCT}|MEM_WARN_PCT=${MEM_WARN_PCT}"
+      - "ofelia.job-run.dockermon.volume=/var/run/docker.sock:/var/run/docker.sock:ro"

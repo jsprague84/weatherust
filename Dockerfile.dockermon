@@ -1,0 +1,17 @@
+FROM rust:1.90-bookworm AS builder
+WORKDIR /app
+
+COPY Cargo.toml Cargo.lock ./
+COPY src ./src
+COPY common ./common
+COPY dockermon ./dockermon
+RUN cargo build -p dockermon --release
+
+FROM gcr.io/distroless/cc-debian12:nonroot AS runtime
+WORKDIR /app
+
+COPY --from=builder /app/target/release/dockermon /app/dockermon
+
+ENV RUST_LOG=info
+ENTRYPOINT ["/app/dockermon"]
+
