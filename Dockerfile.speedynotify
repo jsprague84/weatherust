@@ -3,13 +3,8 @@
 FROM rust:1.90-bookworm AS builder
 WORKDIR /app
 
-# Copy workspace manifests and members. The root manifest defines the
-# weatherust package, so include `src/` to satisfy Cargo's target discovery
-# even though we only build `-p speedynotify` here.
-COPY Cargo.toml Cargo.lock ./
-COPY src ./src
-COPY common ./common
-COPY speedynotify ./speedynotify
+# Copy full workspace so Cargo can resolve all members reliably
+COPY . .
 RUN cargo build -p speedynotify --release
 
 FROM debian:12-slim AS runtime
