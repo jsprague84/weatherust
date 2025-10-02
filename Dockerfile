@@ -8,10 +8,8 @@ RUN apt-get update \
     && apt-get install -y --no-install-recommends pkg-config libssl-dev ca-certificates \
     && rm -rf /var/lib/apt/lists/*
 
-# Copy full source and build (simpler, more reliable in CI)
-COPY Cargo.toml Cargo.lock ./
-COPY src ./src
-COPY common ./common
+# Copy full workspace so Cargo can resolve all members reliably
+COPY . .
 RUN cargo build --release
 
 # --- Runtime ---

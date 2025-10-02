@@ -1,0 +1,12 @@
+.git
+target
+.env
+.env.*
+*.patch
+*.bundle
+.github
+Dockerfile*
+scripts
+README.md
+LICENSE
+*.md
