@@ -2,7 +2,7 @@ name: build-and-publish
 
 on:
   push:
-    branches: [ main, master ]
+    branches: [ '**' ]
     tags: [ 'v*.*.*' ]
   pull_request:
   workflow_dispatch:
@@ -36,8 +36,13 @@ jobs:
         with:
           images: ghcr.io/${{ github.repository_owner }}/weatherust
           tags: |
+            # Stable tags
             type=raw,value=latest,enable={{is_default_branch}}
             type=ref,event=tag
+            # Pre-merge testing tags
+            type=ref,event=branch
+            type=ref,event=pr
+            type=sha
 
       - name: Build and push
         uses: docker/build-push-action@v6

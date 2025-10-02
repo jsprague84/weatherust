@@ -66,16 +66,22 @@ Adjusting schedule:
 - Steps:
   - Push to `main` to publish `ghcr.io/jsprague84/weatherust:latest`.
   - Create a tag like `v0.1.0` to also publish `ghcr.io/jsprague84/weatherust:v0.1.0`.
-  - docker-compose here is already set to `ghcr.io/jsprague84/weatherust:latest` for both the service and Ofelia job.
+  - Branch/PR builds publish testing tags so you can pull pre-merge images:
+    - `:feature-branch-name` (branch name slugified)
+    - `:pr-<number>` (on PRs)
+    - `:sha-<short>` (commit SHA)
+  - docker-compose supports overriding tags via `.env`:
+    - `WEATHERUST_TAG` and `SPEEDYNOTIFY_TAG` (see `.env.example`).
   - If the GHCR package is private, configure a registry login on the host running compose.
 
-**Releases and Version Pinning**
+**Releases, Pinning, and Pre‑Merge Testing**
 
 - Recommended for stability: pin to a published release tag instead of `latest`.
-- In `docker-compose.yml` change both references:
-  - `weatherust.image: ghcr.io/jsprague84/weatherust:v0.1.0`
-  - `ofelia.job-run.weatherust.image: ghcr.io/jsprague84/weatherust:v0.1.0`
-- Apply: `docker compose pull && docker compose up -d`
+- For pre‑merge testing, set env overrides in `.env`:
+  - `WEATHERUST_TAG=feature-feature-scaffold`
+  - `SPEEDYNOTIFY_TAG=feature-feature-scaffold`
+  - Then: `docker compose pull && docker compose up -d`
+  - Unset the overrides (or set to a release tag) after testing.
 
 **Notes**
 
