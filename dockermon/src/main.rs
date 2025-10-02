@@ -1,7 +1,6 @@
 use clap::Parser;
-use common::{dotenv_init, send_gotify};
+use common::{dotenv_init, http_client, send_gotify};
 use futures_util::StreamExt;
-use std::collections::HashMap;
 use std::env;
 use tokio::time::{timeout, Duration};
 
@@ -71,13 +70,16 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         let (running, health_status) = match inspect.state {
             Some(state) => {
                 let running = state.running.unwrap_or(false);
-                let hs = state
-                    .health
-                    .and_then(|h| h.status)
-                    .unwrap_or_else(|| "unknown".to_string());
-                (running, hs)
+                let hs = match state.health.and_then(|h| h.status) {
+                    Some(bollard::container::HealthStatusEnum::HEALTHY) => "healthy",
+                    Some(bollard::container::HealthStatusEnum::UNHEALTHY) => "unhealthy",
+                    Some(bollard::container::HealthStatusEnum::STARTING) => "starting",
+                    Some(bollard::container::HealthStatusEnum::NONE) => "none",
+                    None => "none",
+                };
+                (running, hs.to_string())
             }
-            None => (false, "unknown".to_string()),
+            None => (false, "none".to_string()),
         };
 
         // Sample a single stats frame with a short timeout
@@ -136,7 +138,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     if !args.quiet { println!("{}\n{}", title, body); }
 
     if notify_always || !issues.is_empty() {
-        let client = reqwest::Client::new();
+        let client = http_client();
         if let Err(e) = send_gotify(&client, title, &body).await {
             eprintln!("Gotify send error: {e}");
         }
@@ -155,42 +157,42 @@ async fn sample_stats_once(
 ) -> Result<(Option<f64>, Option<f64>), Box<dyn std::error::Error>> {
     use bollard::container::StatsOptions;
     let mut stream = docker.stats(id, Some(StatsOptions { stream: false, one_shot: true }));
-    let frame = timeout(Duration::from_secs(2), stream.next()).await??;
+    let next_opt = timeout(Duration::from_secs(2), stream.next()).await?;
+    let stats = match next_opt {
+        Some(res) => res?,
+        None => return Ok((None, None)),
+    };
 
-    // CPU% calculation per Docker docs
-    let cpu_pct = frame.as_ref().and_then(|s| {
-        let cpu_stats = &s.cpu_stats;
-        let precpu_stats = &s.precpu_stats;
-        let total = cpu_stats.cpu_usage.total_usage? as f64;
-        let pre_total = precpu_stats
+    // CPU% calculation per Docker docs (may be None if precpu not available)
+    let cpu_pct: Option<f64> = {
+        let cpu_stats = &stats.cpu_stats;
+        let total = cpu_stats.cpu_usage.total_usage;
+        let system = cpu_stats.system_cpu_usage;
+        let (pre_total, pre_system) = stats
+            .precpu_stats
             .as_ref()
-            .and_then(|p| p.cpu_usage.total_usage)
-            .unwrap_or(0) as f64;
-        let system = cpu_stats.system_cpu_usage? as f64;
-        let pre_system = precpu_stats
-            .as_ref()
-            .and_then(|p| p.system_cpu_usage)
-            .unwrap_or(0) as f64;
-        let cpu_delta = total - pre_total;
-        let system_delta = system - pre_system;
-        if cpu_delta > 0.0 && system_delta > 0.0 {
-            let online_cpus = cpu_stats
-                .online_cpus
-                .or_else(|| cpu_stats.cpu_usage.percpu_usage.as_ref().map(|v| v.len() as u64))
-                .unwrap_or(1) as f64;
-            Some((cpu_delta / system_delta) * online_cpus * 100.0)
-        } else {
-            None
+            .map(|p| (p.cpu_usage.total_usage, p.system_cpu_usage))
+            .unwrap_or((None, None));
+
+        match (total, system, pre_total, pre_system) {
+            (Some(t), Some(s), Some(pt), Some(ps)) if t > pt && s > ps => {
+                let cpu_delta = (t - pt) as f64;
+                let system_delta = (s - ps) as f64;
+                let online_cpus = cpu_stats
+                    .online_cpus
+                    .or_else(|| cpu_stats.cpu_usage.percpu_usage.as_ref().map(|v| v.len() as u64))
+                    .unwrap_or(1) as f64;
+                Some((cpu_delta / system_delta) * online_cpus * 100.0)
+            }
+            _ => None,
         }
-    });
+    };
 
     // Memory%
-    let mem_pct = frame.as_ref().and_then(|s| {
-        let usage = s.memory_stats.usage? as f64;
-        let limit = s.memory_stats.limit? as f64;
-        if limit > 0.0 { Some((usage / limit) * 100.0) } else { None }
-    });
+    let mem_pct: Option<f64> = match (stats.memory_stats.usage, stats.memory_stats.limit) {
+        (Some(usage), Some(limit)) if limit > 0 => Some((usage as f64 / limit as f64) * 100.0),
+        _ => None,
+    };
 
     Ok((cpu_pct, mem_pct))
 }
-
