@@ -5,7 +5,7 @@ WORKDIR /app
 COPY . .
 RUN cargo build -p dockermon --release
 
-FROM gcr.io/distroless/cc-debian12:nonroot AS runtime
+FROM gcr.io/distroless/cc-debian12 AS runtime
 WORKDIR /app
 
 COPY --from=builder /app/target/release/dockermon /app/dockermon
