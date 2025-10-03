@@ -53,4 +53,4 @@ services:
       - "ofelia.job-run.dockermon.command=--quiet"
       # For reliability with Ofelia env injection, set GOTIFY_KEY directly from DOCKERMON_GOTIFY_KEY
       - "ofelia.job-run.dockermon.env=GOTIFY_KEY=${DOCKERMON_GOTIFY_KEY}|GOTIFY_URL=${GOTIFY_URL}|HEALTH_NOTIFY_ALWAYS=${HEALTH_NOTIFY_ALWAYS}|CPU_WARN_PCT=${CPU_WARN_PCT}|MEM_WARN_PCT=${MEM_WARN_PCT}"
-      - "ofelia.job-run.dockermon.volume=/var/run/docker.sock:/var/run/docker.sock:ro"
+      - "ofelia.job-run.dockermon.volume=/var/run/docker.sock:/var/run/docker.sock:ro|${ENV_FILE_HOST_PATH}:/app/.env:ro"
