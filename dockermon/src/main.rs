@@ -31,6 +31,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     dotenv_init();
     let args = Args::parse();
 
+    // Allow a dockermon-specific Gotify token override
+    if let Ok(tok) = std::env::var("DOCKERMON_GOTIFY_KEY") {
+        if !tok.trim().is_empty() {
+            std::env::set_var("GOTIFY_KEY", tok);
+        }
+    }
+
     // Resolve thresholds and flags from env with CLI overrides
     let cpu_warn = args.cpu_warn_pct.or_else(|| env_var_f64("CPU_WARN_PCT"));
     let mem_warn = args.mem_warn_pct.or_else(|| env_var_f64("MEM_WARN_PCT"));
