@@ -125,20 +125,21 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Build output
     let mut lines = Vec::new();
+    let had_issues = !issues.is_empty();
     let title;
-    if issues.is_empty() {
+    if !had_issues {
         title = "Docker Health: OK";
         lines.push(format!("All containers OK ({} checked)", ok_count));
     } else {
         title = "Docker Health: Issues";
         lines.push(format!("{} issue(s) detected", issues.len()));
-        lines.extend(issues);
+        lines.extend(issues.iter().cloned());
     }
 
     let body = lines.join("\n");
     if !args.quiet { println!("{}\n{}", title, body); }
 
-    if notify_always || !issues.is_empty() {
+    if notify_always || had_issues {
         let client = http_client();
         if let Err(e) = send_gotify(&client, title, &body).await {
             eprintln!("Gotify send error: {e}");
@@ -166,13 +167,13 @@ async fn sample_stats_once(
 
     // CPU% calculation per Docker docs (may be None if precpu/system not available)
     let cpu_stats = &stats.cpu_stats;
-    let total = cpu_stats.cpu_usage.total_usage as f64; // total is u64
+    let total = cpu_stats.cpu_usage.total_usage as f64; // u64 -> f64
     let system_opt = cpu_stats.system_cpu_usage; // Option<u64>
-    let pre_total_opt = stats.precpu_stats.cpu_usage.total_usage; // Option<u64>
+    let pre_total = stats.precpu_stats.cpu_usage.total_usage as f64; // u64 -> f64
     let pre_system_opt = stats.precpu_stats.system_cpu_usage; // Option<u64>
-    let cpu_pct: Option<f64> = match (system_opt, pre_total_opt, pre_system_opt) {
-        (Some(system), Some(pre_total), Some(pre_system)) if total > pre_total as f64 && (system as f64) > pre_system as f64 => {
-            let cpu_delta = total - pre_total as f64;
+    let cpu_pct: Option<f64> = match (system_opt, pre_system_opt) {
+        (Some(system), Some(pre_system)) if total > pre_total && (system as f64) > pre_system as f64 => {
+            let cpu_delta = total - pre_total;
             let system_delta = system as f64 - pre_system as f64;
             if system_delta > 0.0 {
                 let online_cpus = cpu_stats
