@@ -1,6 +1,7 @@
 use clap::Parser;
 use common::{dotenv_init, http_client, send_gotify};
 use futures_util::StreamExt;
+use bollard::models::HealthStatusEnum;
 use std::env;
 use tokio::time::{timeout, Duration};
 
@@ -71,11 +72,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             Some(state) => {
                 let running = state.running.unwrap_or(false);
                 let hs = match state.health.and_then(|h| h.status) {
-                    Some(bollard::container::HealthStatusEnum::HEALTHY) => "healthy",
-                    Some(bollard::container::HealthStatusEnum::UNHEALTHY) => "unhealthy",
-                    Some(bollard::container::HealthStatusEnum::STARTING) => "starting",
-                    Some(bollard::container::HealthStatusEnum::NONE) => "none",
-                    None => "none",
+                    Some(HealthStatusEnum::HEALTHY) => "healthy",
+                    Some(HealthStatusEnum::UNHEALTHY) => "unhealthy",
+                    Some(HealthStatusEnum::STARTING) => "starting",
+                    Some(HealthStatusEnum::NONE) => "none",
+                    Some(_) | None => "none",
                 };
                 (running, hs.to_string())
             }
@@ -163,29 +164,27 @@ async fn sample_stats_once(
         None => return Ok((None, None)),
     };
 
-    // CPU% calculation per Docker docs (may be None if precpu not available)
-    let cpu_pct: Option<f64> = {
-        let cpu_stats = &stats.cpu_stats;
-        let total = cpu_stats.cpu_usage.total_usage;
-        let system = cpu_stats.system_cpu_usage;
-        let (pre_total, pre_system) = stats
-            .precpu_stats
-            .as_ref()
-            .map(|p| (p.cpu_usage.total_usage, p.system_cpu_usage))
-            .unwrap_or((None, None));
-
-        match (total, system, pre_total, pre_system) {
-            (Some(t), Some(s), Some(pt), Some(ps)) if t > pt && s > ps => {
-                let cpu_delta = (t - pt) as f64;
-                let system_delta = (s - ps) as f64;
+    // CPU% calculation per Docker docs (may be None if precpu/system not available)
+    let cpu_stats = &stats.cpu_stats;
+    let total = cpu_stats.cpu_usage.total_usage as f64; // total is u64
+    let system_opt = cpu_stats.system_cpu_usage; // Option<u64>
+    let pre_total_opt = stats.precpu_stats.cpu_usage.total_usage; // Option<u64>
+    let pre_system_opt = stats.precpu_stats.system_cpu_usage; // Option<u64>
+    let cpu_pct: Option<f64> = match (system_opt, pre_total_opt, pre_system_opt) {
+        (Some(system), Some(pre_total), Some(pre_system)) if total > pre_total as f64 && (system as f64) > pre_system as f64 => {
+            let cpu_delta = total - pre_total as f64;
+            let system_delta = system as f64 - pre_system as f64;
+            if system_delta > 0.0 {
                 let online_cpus = cpu_stats
                     .online_cpus
                     .or_else(|| cpu_stats.cpu_usage.percpu_usage.as_ref().map(|v| v.len() as u64))
                     .unwrap_or(1) as f64;
                 Some((cpu_delta / system_delta) * online_cpus * 100.0)
+            } else {
+                None
             }
-            _ => None,
         }
+        _ => None,
     };
 
     // Memory%
