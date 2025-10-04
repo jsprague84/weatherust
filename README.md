@@ -89,10 +89,15 @@ Adjusting schedule:
 
 **Security/Secrets**
 
-- `.env` is gitignored. Do not commit real API keys.
-- If keys were previously committed, rotate them in OWM and Gotify.
-- You can provide the Gotify app key via an env var (`GOTIFY_KEY`) or a file path (`GOTIFY_KEY_FILE`).
-- Example with Docker: mount a secret file and set `GOTIFY_KEY_FILE` to that path.
+- `.env` is gitignored. Do not commit real API tokens.
+- Rotate tokens if they were ever exposed.
+- Explicit Gotify app tokens per tool (recommended):
+  - `GOTIFY_URL` points to your server (e.g., `https://gotify.example.com/message`).
+  - `GOTIFY_KEY` → weatherust app token.
+  - `SPEEDY_GOTIFY_KEY` → speedynotify app token (the binary sets `GOTIFY_KEY` internally).
+  - `DOCKERMON_GOTIFY_KEY` → dockermon app token (the binary sets `GOTIFY_KEY` internally).
+  - If you prefer a single app, set all three to the same value.
+  - Optional: `GOTIFY_KEY_FILE` path to a file containing only a token (fallback).
 
 Example (Docker secrets-style mounting):
 - Create a file with only the key, e.g., `/opt/secrets/gotify_key`.
