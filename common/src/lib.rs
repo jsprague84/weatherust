@@ -20,20 +20,20 @@ pub async fn send_gotify(
         env::var("GOTIFY_URL").unwrap_or_else(|_| "http://localhost:8080/message".to_string());
 
     // Resolve key with precedence:
-    // 1) DOCKERMON_GOTIFY_KEY
-    // 2) SPEEDY_GOTIFY_KEY
-    // 3) GOTIFY_KEY
+    // 1) GOTIFY_KEY (explicit; caller may set this)
+    // 2) DOCKERMON_GOTIFY_KEY (tool-specific)
+    // 3) SPEEDY_GOTIFY_KEY (tool-specific)
     // 4) GOTIFY_KEY_FILE (path to file containing only the token)
     let mut key_source = "";
-    let gotify_key = if let Ok(v) = env::var("DOCKERMON_GOTIFY_KEY") {
+    let gotify_key = if let Ok(v) = env::var("GOTIFY_KEY") {
+        let v = v.trim().to_string();
+        if !v.is_empty() { key_source = "GOTIFY_KEY"; v } else { String::new() }
+    } else if let Ok(v) = env::var("DOCKERMON_GOTIFY_KEY") {
         let v = v.trim().to_string();
         if !v.is_empty() { key_source = "DOCKERMON_GOTIFY_KEY"; v } else { String::new() }
     } else if let Ok(v) = env::var("SPEEDY_GOTIFY_KEY") {
         let v = v.trim().to_string();
         if !v.is_empty() { key_source = "SPEEDY_GOTIFY_KEY"; v } else { String::new() }
-    } else if let Ok(v) = env::var("GOTIFY_KEY") {
-        let v = v.trim().to_string();
-        if !v.is_empty() { key_source = "GOTIFY_KEY"; v } else { String::new() }
     } else if let Ok(path) = env::var("GOTIFY_KEY_FILE") {
         match std::fs::read_to_string(&path) {
             Ok(s) => { key_source = "GOTIFY_KEY_FILE"; s.trim().to_string() },
