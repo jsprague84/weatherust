@@ -47,9 +47,8 @@
     - If CLI flags are omitted, the app uses these defaults; `DEFAULT_ZIP` takes precedence over `DEFAULT_LOCATION`.
 - How env is passed to the job:
   - Ofelia job-run does not inherit the service’s `env_file`.
-  - This compose uses a single `env` label with pipe-separated `KEY=VALUE` pairs expanded from `.env`.
-  - It also mounts your `.env` into the job container at `/app/.env` so the app’s dotenv loader can read it.
-  - Set `ENV_FILE_HOST_PATH` in `.env` to the absolute host path of your `.env` file (used by the Ofelia volume label).
+  - We mount your host `.env` into the Ofelia service at `/ofelia/.env` and use the label `ofelia.job-run.<name>.env-file=/ofelia/.env` so the job container receives all variables.
+  - Set `ENV_FILE_HOST_PATH` in `.env` to the absolute host path of your `.env` file (used by the Ofelia service volume).
 - Start the stack:
   - `docker compose up -d`
 - Logs:
@@ -128,7 +127,7 @@ Environment defaults:
 
 This repo is now a Rust workspace with a shared helper crate. A second binary, `speedynotify`, runs the Ookla Speedtest CLI and sends a Gotify summary.
 
-Added: `dockermon` — checks Docker containers for health issues and high CPU/MEM and sends a Gotify summary. Designed for Ofelia to run every 5 minutes.
+Added: `dockermon` — checks Docker containers for health issues and high CPU/MEM and sends a Gotify summary. Designed for Ofelia to run every 5 minutes. It uses Ofelia's `env-file` label for reliable environment passing.
 
 - Enable in compose:
   - Image: `ghcr.io/jsprague84/speedynotify:latest` (publish separately).
@@ -162,9 +161,12 @@ Publish images (CI):
   - `HEALTH_NOTIFY_ALWAYS` (default `false`) — notify even when all OK.
   - `CPU_WARN_PCT` (default `85`) — CPU percentage threshold.
   - `MEM_WARN_PCT` (default `90`) — memory percentage threshold.
+  - `DOCKERMON_GOTIFY_KEY` (optional) — tool-specific token; falls back to `GOTIFY_KEY`/`GOTIFY_KEY_FILE`.
+  - `GOTIFY_DEBUG` (optional) — set to `true`/`1` to print debug info in logs (URL, token source).
 - Compose integration:
   - Service mounts the Docker socket read-only.
-  - Ofelia job runs every 5 minutes and mounts the socket via label volume.
+  - Ofelia mounts the host `.env` at `/ofelia/.env` and uses `env-file=/ofelia/.env` for the job.
+  - Job mounts the Docker socket via a single `volume` label.
   - Tag override: set `DOCKERMON_TAG` in `.env` for pre-merge testing.
 
  
