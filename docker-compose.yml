@@ -48,5 +48,5 @@ services:
       - "ofelia.job-run.dockermon.schedule=0 */5 * * * *"
       - "ofelia.job-run.dockermon.image=ghcr.io/jsprague84/dockermon:${DOCKERMON_TAG:-latest}"
       - "ofelia.job-run.dockermon.command=--quiet"
-      - "ofelia.job-run.dockermon.env-file=/ofelia/.env"
+      - "ofelia.job-run.dockermon.env=DOCKERMON_GOTIFY_KEY=${DOCKERMON_GOTIFY_KEY}|GOTIFY_KEY=${GOTIFY_KEY}|GOTIFY_URL=${GOTIFY_URL}|HEALTH_NOTIFY_ALWAYS=${HEALTH_NOTIFY_ALWAYS}|CPU_WARN_PCT=${CPU_WARN_PCT}|MEM_WARN_PCT=${MEM_WARN_PCT}|GOTIFY_DEBUG=${GOTIFY_DEBUG}"
       - "ofelia.job-run.dockermon.volume=/var/run/docker.sock:/var/run/docker.sock:ro"
