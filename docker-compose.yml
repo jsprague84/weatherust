@@ -24,6 +24,7 @@ services:
   # Long-running runner so Ofelia can exec with full env inherited
   dockermon_runner:
     image: ghcr.io/jsprague84/dockermon:${DOCKERMON_TAG:-latest}
+    container_name: dockermon_runner
     env_file:
       - .env
     volumes:
