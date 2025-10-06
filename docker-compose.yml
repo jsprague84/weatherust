@@ -21,17 +21,6 @@ services:
       - /var/run/docker.sock:/var/run/docker.sock:ro
     restart: "no"
 
-  # Long-running runner so Ofelia can exec with full env inherited
-  dockermon_runner:
-    image: ghcr.io/jsprague84/dockermon:${DOCKERMON_TAG:-latest}
-    container_name: dockermon_runner
-    env_file:
-      - .env
-    volumes:
-      - /var/run/docker.sock:/var/run/docker.sock:ro
-    command: ["sleep", "infinity"]
-    restart: unless-stopped
-
   ofelia:
     image: mcuadros/ofelia:latest
     container_name: ofelia
@@ -55,7 +44,9 @@ services:
       - "ofelia.job-run.speedynotify.command=--quiet --min-down ${SPEEDTEST_MIN_DOWN} --min-up ${SPEEDTEST_MIN_UP}"
       - "ofelia.job-run.speedynotify.env-file=/ofelia/.env"
 
-      # Docker monitor every 5 minutes (exec inside runner to inherit env_file)
-      - "ofelia.job-exec.dockermon.schedule=0 */5 * * * *"
-      - "ofelia.job-exec.dockermon.container=dockermon_runner"
-      - "ofelia.job-exec.dockermon.command=/app/dockermon --quiet"
+      # Docker monitor every 5 minutes (job-run with env + docker socket)
+      - "ofelia.job-run.dockermon.schedule=0 */5 * * * *"
+      - "ofelia.job-run.dockermon.image=ghcr.io/jsprague84/dockermon:${DOCKERMON_TAG:-latest}"
+      - "ofelia.job-run.dockermon.command=--quiet"
+      - "ofelia.job-run.dockermon.env-file=/ofelia/.env"
+      - "ofelia.job-run.dockermon.volume=/var/run/docker.sock:/var/run/docker.sock:ro"

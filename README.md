@@ -175,12 +175,9 @@ Publish images (CI):
 - Tag override: set `DOCKERMON_TAG` in `.env` for pre-merge testing.
 
 Runtime pattern (robust):
-- This compose uses Ofelia `job-exec` for dockermon to ensure the job inherits the full env from a long-running runner container:
-  - Service `dockermon_runner` runs the same image with `env_file: .env` and the docker socket mounted.
-  - It sets `container_name: dockermon_runner` so Ofelia can reliably exec into it.
-  - Labels on Ofelia:
-    - `ofelia.job-exec.dockermon.container=dockermon_runner`
-    - `ofelia.job-exec.dockermon.command=/app/dockermon --quiet`
-  - This avoids env label parsing differences across Ofelia versions.
+- This compose uses Ofelia `job-run` for dockermon while still mounting env + socket so the job receives everything it needs:
+  - `ofelia.job-run.dockermon.env-file=/ofelia/.env`
+  - `ofelia.job-run.dockermon.volume=/var/run/docker.sock:/var/run/docker.sock:ro`
+  - `ofelia.job-run.dockermon.command=--quiet`
 
  
