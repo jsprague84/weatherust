@@ -21,6 +21,17 @@ services:
       - /var/run/docker.sock:/var/run/docker.sock:ro
     restart: "no"
 
+  # Long-running runner so Ofelia can exec with full env inherited
+  dockermon_runner:
+    image: ghcr.io/jsprague84/dockermon:${DOCKERMON_TAG:-latest}
+    container_name: dockermon_runner
+    env_file:
+      - .env
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    command: ["sleep", "infinity"]
+    restart: unless-stopped
+
   ofelia:
     image: mcuadros/ofelia:latest
     container_name: ofelia
@@ -37,19 +48,14 @@ services:
       - "ofelia.job-run.weatherust.image=ghcr.io/jsprague84/weatherust:${WEATHERUST_TAG:-latest}"
       - "ofelia.job-run.weatherust.command=--zip 52726 --units imperial --quiet"
       - "ofelia.job-run.weatherust.env-file=/ofelia/.env"
-      - "ofelia.job-run.weatherust.env=OWM_API_KEY=${OWM_API_KEY}|GOTIFY_KEY=${GOTIFY_KEY}|GOTIFY_URL=${GOTIFY_URL}|DEFAULT_ZIP=${DEFAULT_ZIP}|DEFAULT_LOCATION=${DEFAULT_LOCATION}|DEFAULT_UNITS=${DEFAULT_UNITS}"
 
       # Speedtest daily at 02:10 (disabled until image exists)
       - "ofelia.job-run.speedynotify.schedule=0 10 2 * * *"
       - "ofelia.job-run.speedynotify.image=ghcr.io/jsprague84/speedynotify:${SPEEDYNOTIFY_TAG:-latest}"
       - "ofelia.job-run.speedynotify.command=--quiet --min-down ${SPEEDTEST_MIN_DOWN} --min-up ${SPEEDTEST_MIN_UP}"
       - "ofelia.job-run.speedynotify.env-file=/ofelia/.env"
-      - "ofelia.job-run.speedynotify.env=GOTIFY_KEY=${GOTIFY_KEY}|GOTIFY_URL=${GOTIFY_URL}|SPEEDY_GOTIFY_KEY=${SPEEDY_GOTIFY_KEY}|SPEEDTEST_MIN_DOWN=${SPEEDTEST_MIN_DOWN}|SPEEDTEST_MIN_UP=${SPEEDTEST_MIN_UP}|SPEEDTEST_SERVER_ID=${SPEEDTEST_SERVER_ID}"
 
-      # Docker monitor every 5 minutes (job-run with env + docker socket)
-      - "ofelia.job-run.dockermon.schedule=0 */5 * * * *"
-      - "ofelia.job-run.dockermon.image=ghcr.io/jsprague84/dockermon:${DOCKERMON_TAG:-latest}"
-      - "ofelia.job-run.dockermon.command=--quiet"
-      - "ofelia.job-run.dockermon.env-file=/ofelia/.env"
-      - "ofelia.job-run.dockermon.env=GOTIFY_KEY=${GOTIFY_KEY}|DOCKERMON_GOTIFY_KEY=${DOCKERMON_GOTIFY_KEY}|GOTIFY_URL=${GOTIFY_URL}|GOTIFY_DEBUG=${GOTIFY_DEBUG}|HEALTH_NOTIFY_ALWAYS=${HEALTH_NOTIFY_ALWAYS}|CPU_WARN_PCT=${CPU_WARN_PCT}|MEM_WARN_PCT=${MEM_WARN_PCT}"
-      - "ofelia.job-run.dockermon.volume=/var/run/docker.sock:/var/run/docker.sock:ro"
+      # Docker monitor every 5 minutes (exec inside runner to inherit env_file)
+      - "ofelia.job-exec.dockermon.schedule=0 */5 * * * *"
+      - "ofelia.job-exec.dockermon.container=dockermon_runner"
+      - "ofelia.job-exec.dockermon.command=/app/dockermon --quiet"
