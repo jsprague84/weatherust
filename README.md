@@ -170,13 +170,13 @@ Publish images (CI):
   - `GOTIFY_DEBUG` (optional) — set to `true`/`1` to print debug info in logs (URL, token source).
 - Compose integration:
   - Service mounts the Docker socket read-only.
-- Ofelia mounts the host `.env` at `/ofelia/.env` and uses `env-file=/ofelia/.env` for the job.
+- Ofelia mounts the host `.env` for reference, and the job-run labels point `env-file=${ENV_FILE_HOST_PATH}` so Docker loads the same env vars the services use.
 - Job mounts the Docker socket via a single `volume` label.
 - Tag override: set `DOCKERMON_TAG` in `.env` for pre-merge testing.
 
 Runtime pattern (robust):
 - This compose uses Ofelia `job-run` for dockermon while still mounting env + socket so the job receives everything it needs:
-  - `ofelia.job-run.dockermon.env-file=/ofelia/.env`
+  - `ofelia.job-run.dockermon.env-file=${ENV_FILE_HOST_PATH}`
   - `ofelia.job-run.dockermon.volume=/var/run/docker.sock:/var/run/docker.sock:ro`
   - `ofelia.job-run.dockermon.command=--quiet`
 
