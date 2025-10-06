@@ -29,7 +29,7 @@ services:
       - .env
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock:ro
-    command: ["sh", "-lc", "sleep infinity"]
+    command: ["sleep", "infinity"]
     restart: unless-stopped
 
   ofelia:
