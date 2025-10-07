@@ -175,7 +175,6 @@ Publish images (CI):
 - Tag override: set `DOCKERMON_TAG` in `.env` for pre-merge testing.
 
 Runtime pattern (robust):
-- This compose keeps a lightweight `dockermon_runner` container (same image, `sleep infinity`) alive so Ofelia can `job-exec` into it and automatically inherit the full `.env` plus socket mount:
+- This compose keeps a lightweight `dockermon_runner` container (same image, entrypoint overridden to `sleep infinity`) alive so Ofelia can `job-exec` into it and automatically inherit the full `.env` plus socket mount:
   - `ofelia.job-exec.dockermon.container=dockermon_runner`
   - `ofelia.job-exec.dockermon.command=/app/dockermon --quiet`
-
