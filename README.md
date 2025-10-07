@@ -165,9 +165,10 @@ Publish images (CI):
 - Env:
   - `HEALTH_NOTIFY_ALWAYS` (default `false`) — notify even when all OK.
   - `CPU_WARN_PCT` (default `85`) — CPU percentage threshold.
-  - `MEM_WARN_PCT` (default `90`) — memory percentage threshold.
-  - `DOCKERMON_GOTIFY_KEY` (optional) — tool-specific token; falls back to `GOTIFY_KEY`/`GOTIFY_KEY_FILE`.
-  - `GOTIFY_DEBUG` (optional) — set to `true`/`1` to print debug info in logs (URL, token source).
+- `MEM_WARN_PCT` (default `90`) — memory percentage threshold.
+- `DOCKERMON_GOTIFY_KEY` (optional) — tool-specific token; falls back to `GOTIFY_KEY`/`GOTIFY_KEY_FILE`.
+- `GOTIFY_DEBUG` (optional) — set to `true`/`1` to print debug info in logs (URL, token source).
+- `DOCKERMON_IGNORE` (optional) — comma-separated list of container names/IDs/service names to skip (case-insensitive).
 - Compose integration:
   - Service mounts the Docker socket read-only.
 - Ofelia mounts the host `.env` inside the container at `/ofelia/.env`; pointing `env-file=/ofelia/.env` at each job-run keeps scheduled runs aligned with the service dotenv entries.
@@ -175,6 +176,6 @@ Publish images (CI):
 - Tag override: set `DOCKERMON_TAG` in `.env` for pre-merge testing.
 
 Runtime pattern (robust):
-- This compose keeps a lightweight `dockermon_runner` container (same image, entrypoint overridden to `sleep infinity`) alive so Ofelia can `job-exec` into it and automatically inherit the full `.env` plus socket mount:
+- This compose keeps a lightweight `dockermon_runner` container (same image, entrypoint overridden to `sleep infinity`) alive so Ofelia can `job-exec` into it and automatically inherit the full `.env` plus socket mount. Use the `DOCKERMON_IGNORE` env (or `--ignore` CLI flag) to suppress noise from short-lived containers (e.g., the one-off weather/speedy jobs).
   - `ofelia.job-exec.dockermon.container=dockermon_runner`
   - `ofelia.job-exec.dockermon.command=/app/dockermon --quiet`

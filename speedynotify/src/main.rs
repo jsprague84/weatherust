@@ -6,7 +6,7 @@ use tokio::process::Command;
 
 #[derive(Parser, Debug)]
 #[command(name = "speedynotify")]
-#[command(about = "Run Ookla speedtest and send Gotify summary")] 
+#[command(about = "Run Ookla speedtest and send Gotify summary")]
 struct Args {
     /// Minimum acceptable download speed in Mbps
     #[arg(long)]
@@ -36,16 +36,26 @@ struct OoklaResult {
 }
 
 #[derive(Debug, Deserialize)]
-struct Ping { latency: f64 }
+struct Ping {
+    latency: f64,
+}
 
 #[derive(Debug, Deserialize)]
-struct Transfer { bandwidth: f64 }
+struct Transfer {
+    bandwidth: f64,
+}
 
 #[derive(Debug, Deserialize)]
-struct Interface { name: Option<String> }
+struct Interface {
+    name: Option<String>,
+}
 
 #[derive(Debug, Deserialize)]
-struct Server { id: Option<u32>, name: Option<String>, location: Option<String> }
+struct Server {
+    id: Option<u32>,
+    name: Option<String>,
+    location: Option<String>,
+}
 
 // speedtest-cli (Python) JSON format
 #[derive(Debug, Deserialize)]
@@ -58,10 +68,16 @@ struct PyResult {
 }
 
 #[derive(Debug, Deserialize)]
-struct PyClient { isp: Option<String> }
+struct PyClient {
+    isp: Option<String>,
+}
 
 #[derive(Debug, Deserialize)]
-struct PyServer { id: Option<String>, name: Option<String>, sponsor: Option<String> }
+struct PyServer {
+    id: Option<String>,
+    name: Option<String>,
+    sponsor: Option<String>,
+}
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -89,21 +105,34 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Try Ookla CLI first; fall back to python speedtest-cli if needed
     match run_and_parse_ookla(server_id).await {
         Ok((down_mbps, up_mbps, ping_ms, isp, iface, server)) => {
-            emit_and_notify(args.quiet, down_mbps, up_mbps, ping_ms, isp, iface, server, min_down, min_up).await?;
+            emit_and_notify(
+                args.quiet, down_mbps, up_mbps, ping_ms, isp, iface, server, min_down, min_up,
+            )
+            .await?;
         }
         Err(e) => {
             let err_s = format!("{}", e).to_lowercase();
             // If Ookla flags are not recognized, try without acceptance flags
             if err_s.contains("unknown option") || err_s.contains("unrecognized option") {
-                if let Ok((down_mbps, up_mbps, ping_ms, isp, iface, server)) = run_and_parse_ookla_no_accept(server_id).await {
-                    emit_and_notify(args.quiet, down_mbps, up_mbps, ping_ms, isp, iface, server, min_down, min_up).await?;
+                if let Ok((down_mbps, up_mbps, ping_ms, isp, iface, server)) =
+                    run_and_parse_ookla_no_accept(server_id).await
+                {
+                    emit_and_notify(
+                        args.quiet, down_mbps, up_mbps, ping_ms, isp, iface, server, min_down,
+                        min_up,
+                    )
+                    .await?;
                     return Ok(());
                 }
             }
             eprintln!("Ookla speedtest attempt failed: {}\nFalling back to python speedtest-cli if available...", e);
             match run_and_parse_python(server_id).await {
                 Ok((down_mbps, up_mbps, ping_ms, isp, iface, server)) => {
-                    emit_and_notify(args.quiet, down_mbps, up_mbps, ping_ms, isp, iface, server, min_down, min_up).await?;
+                    emit_and_notify(
+                        args.quiet, down_mbps, up_mbps, ping_ms, isp, iface, server, min_down,
+                        min_up,
+                    )
+                    .await?;
                 }
                 Err(e2) => {
                     // Avoid launching GUI variants of 'speedtest' by default
@@ -115,8 +144,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                             "Python speedtest-cli unavailable: {}\nAttempting to parse plain text output from 'speedtest' (SPEEDY_ALLOW_TEXT_FALLBACK=1)...",
                             e2
                         );
-                        let (down_mbps, up_mbps, ping_ms, isp, iface, server) = run_and_parse_text().await?;
-                        emit_and_notify(args.quiet, down_mbps, up_mbps, ping_ms, isp, iface, server, min_down, min_up).await?;
+                        let (down_mbps, up_mbps, ping_ms, isp, iface, server) =
+                            run_and_parse_text().await?;
+                        emit_and_notify(
+                            args.quiet, down_mbps, up_mbps, ping_ms, isp, iface, server, min_down,
+                            min_up,
+                        )
+                        .await?;
                     } else {
                         eprintln!(
                             "No JSON-capable speedtest CLI found. Install 'speedtest-cli' (python) and retry.\nFedora: sudo dnf install -y speedtest-cli  (or: sudo dnf install -y python3-speedtest-cli)\nOr via pipx: pipx install speedtest-cli"
@@ -131,10 +165,17 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
-async fn run_and_parse_ookla(server_id: Option<u32>) -> Result<(f64, f64, f64, String, String, String), Box<dyn std::error::Error>> {
+async fn run_and_parse_ookla(
+    server_id: Option<u32>,
+) -> Result<(f64, f64, f64, String, String, String), Box<dyn std::error::Error>> {
     let mut cmd = Command::new("speedtest");
-    cmd.arg("--accept-license").arg("--accept-gdpr").arg("-f").arg("json");
-    if let Some(id) = server_id { cmd.arg("-s").arg(id.to_string()); }
+    cmd.arg("--accept-license")
+        .arg("--accept-gdpr")
+        .arg("-f")
+        .arg("json");
+    if let Some(id) = server_id {
+        cmd.arg("-s").arg(id.to_string());
+    }
     let output = cmd.output().await?;
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
@@ -148,25 +189,35 @@ async fn run_and_parse_ookla(server_id: Option<u32>) -> Result<(f64, f64, f64, S
     let iface = res.interface.and_then(|i| i.name).unwrap_or_default();
     let server = res
         .server
-        .map(|s| format!(
-            "{}{}{}",
-            s.name.unwrap_or_default(),
-            s.location.map(|l| format!(", {}", l)).unwrap_or_default(),
-            s.id.map(|i| format!(" (#{})", i)).unwrap_or_default()
-        ))
+        .map(|s| {
+            format!(
+                "{}{}{}",
+                s.name.unwrap_or_default(),
+                s.location.map(|l| format!(", {}", l)).unwrap_or_default(),
+                s.id.map(|i| format!(" (#{})", i)).unwrap_or_default()
+            )
+        })
         .unwrap_or_default();
     let isp = res.isp.unwrap_or_default();
     Ok((down_mbps, up_mbps, ping_ms, isp, iface, server))
 }
 
-async fn run_and_parse_ookla_no_accept(server_id: Option<u32>) -> Result<(f64, f64, f64, String, String, String), Box<dyn std::error::Error>> {
+async fn run_and_parse_ookla_no_accept(
+    server_id: Option<u32>,
+) -> Result<(f64, f64, f64, String, String, String), Box<dyn std::error::Error>> {
     let mut cmd = Command::new("speedtest");
     cmd.arg("-f").arg("json");
-    if let Some(id) = server_id { cmd.arg("-s").arg(id.to_string()); }
+    if let Some(id) = server_id {
+        cmd.arg("-s").arg(id.to_string());
+    }
     let output = cmd.output().await?;
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
-        return Err(format!("Ookla speedtest (no-accept) exited {}: {}", output.status, stderr).into());
+        return Err(format!(
+            "Ookla speedtest (no-accept) exited {}: {}",
+            output.status, stderr
+        )
+        .into());
     }
     let stdout = String::from_utf8_lossy(&output.stdout);
     let res: OoklaResult = serde_json::from_str(&stdout)?;
@@ -176,18 +227,22 @@ async fn run_and_parse_ookla_no_accept(server_id: Option<u32>) -> Result<(f64, f
     let iface = res.interface.and_then(|i| i.name).unwrap_or_default();
     let server = res
         .server
-        .map(|s| format!(
-            "{}{}{}",
-            s.name.unwrap_or_default(),
-            s.location.map(|l| format!(", {}", l)).unwrap_or_default(),
-            s.id.map(|i| format!(" (#{})", i)).unwrap_or_default()
-        ))
+        .map(|s| {
+            format!(
+                "{}{}{}",
+                s.name.unwrap_or_default(),
+                s.location.map(|l| format!(", {}", l)).unwrap_or_default(),
+                s.id.map(|i| format!(" (#{})", i)).unwrap_or_default()
+            )
+        })
         .unwrap_or_default();
     let isp = res.isp.unwrap_or_default();
     Ok((down_mbps, up_mbps, ping_ms, isp, iface, server))
 }
 
-async fn run_and_parse_python(server_id: Option<u32>) -> Result<(f64, f64, f64, String, String, String), Box<dyn std::error::Error>> {
+async fn run_and_parse_python(
+    server_id: Option<u32>,
+) -> Result<(f64, f64, f64, String, String, String), Box<dyn std::error::Error>> {
     // Try python variants, preferring HTTPS (--secure) to avoid 403s
     let candidates: &[(&str, &[&str])] = &[
         ("speedtest-cli", &["--json", "--secure"][..]),
@@ -214,12 +269,19 @@ async fn run_and_parse_python(server_id: Option<u32>) -> Result<(f64, f64, f64, 
                 let ping_ms = res.ping;
                 let isp = res.client.and_then(|c| c.isp).unwrap_or_default();
                 let iface = String::new();
-                let server = res.server.map(|s| {
-                    let name = s.name.unwrap_or_default();
-                    let sponsor = s.sponsor.unwrap_or_default();
-                    let id = s.id.unwrap_or_default();
-                    if !id.is_empty() { format!("{} ({}) #{}", name, sponsor, id) } else { format!("{} ({})", name, sponsor) }
-                }).unwrap_or_default();
+                let server = res
+                    .server
+                    .map(|s| {
+                        let name = s.name.unwrap_or_default();
+                        let sponsor = s.sponsor.unwrap_or_default();
+                        let id = s.id.unwrap_or_default();
+                        if !id.is_empty() {
+                            format!("{} ({}) #{}", name, sponsor, id)
+                        } else {
+                            format!("{} ({})", name, sponsor)
+                        }
+                    })
+                    .unwrap_or_default();
                 return Ok((down_mbps, up_mbps, ping_ms, isp, iface, server));
             }
             Ok(output) => {
@@ -246,24 +308,42 @@ async fn emit_and_notify(
 ) -> Result<(), Box<dyn std::error::Error>> {
     let mut lines = Vec::new();
     lines.push(format!("ISP: {} | IF: {} | Server: {}", isp, iface, server));
-    lines.push(format!("Down: {:.2} Mbps | Up: {:.2} Mbps | Ping: {:.1} ms", down_mbps, up_mbps, ping_ms));
+    lines.push(format!(
+        "Down: {:.2} Mbps | Up: {:.2} Mbps | Ping: {:.1} ms",
+        down_mbps, up_mbps, ping_ms
+    ));
     let human = lines.join("\n");
 
     let mut degraded = false;
-    if let Some(min) = min_down { if down_mbps < min { degraded = true; } }
-    if let Some(min) = min_up { if up_mbps < min { degraded = true; } }
+    if let Some(min) = min_down {
+        if down_mbps < min {
+            degraded = true;
+        }
+    }
+    if let Some(min) = min_up {
+        if up_mbps < min {
+            degraded = true;
+        }
+    }
 
-    if !quiet { println!("{}", human); }
+    if !quiet {
+        println!("{}", human);
+    }
 
     let client = http_client();
-    let title = if degraded { "Speedtest: Degraded" } else { "Speedtest: OK" };
+    let title = if degraded {
+        "Speedtest: Degraded"
+    } else {
+        "Speedtest: OK"
+    };
     if let Err(e) = send_gotify(&client, title, &human).await {
         eprintln!("Gotify send error: {e}");
     }
     Ok(())
 }
 
-async fn run_and_parse_text() -> Result<(f64, f64, f64, String, String, String), Box<dyn std::error::Error>> {
+async fn run_and_parse_text(
+) -> Result<(f64, f64, f64, String, String, String), Box<dyn std::error::Error>> {
     let output = Command::new("speedtest").output().await?;
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
@@ -299,11 +379,19 @@ fn parse_speed_line(s: &str) -> Option<f64> {
     // Extract first float and unit, normalize to Mbps
     let num = parse_first_number(s)?;
     let sl = s.to_lowercase();
-    if sl.contains("gbps") || sl.contains("gbit/s") { Some(num * 1000.0) }
-    else if sl.contains("mbps") || sl.contains("mbit/s") { Some(num) }
-    else if sl.contains("kbps") || sl.contains("kbit/s") { Some(num / 1000.0) }
-    else if sl.contains("bps") { Some(num / 1_000_000.0) } // bits per second
-    else { Some(num) }
+    if sl.contains("gbps") || sl.contains("gbit/s") {
+        Some(num * 1000.0)
+    } else if sl.contains("mbps") || sl.contains("mbit/s") {
+        Some(num)
+    } else if sl.contains("kbps") || sl.contains("kbit/s") {
+        Some(num / 1000.0)
+    } else if sl.contains("bps") {
+        Some(num / 1_000_000.0)
+    }
+    // bits per second
+    else {
+        Some(num)
+    }
 }
 
 fn parse_first_number(s: &str) -> Option<f64> {
@@ -311,11 +399,18 @@ fn parse_first_number(s: &str) -> Option<f64> {
     let mut end = None;
     for (i, ch) in s.char_indices() {
         if start.is_none() {
-            if ch.is_ascii_digit() { start = Some(i); }
-        } else if !(ch.is_ascii_digit() || ch == '.' ) {
-            end = Some(i); break;
+            if ch.is_ascii_digit() {
+                start = Some(i);
+            }
+        } else if !(ch.is_ascii_digit() || ch == '.') {
+            end = Some(i);
+            break;
         }
     }
-    let sfx = match (start, end) { (Some(a), Some(b)) => &s[a..b], (Some(a), None) => &s[a..], _ => return None };
+    let sfx = match (start, end) {
+        (Some(a), Some(b)) => &s[a..b],
+        (Some(a), None) => &s[a..],
+        _ => return None,
+    };
     sfx.parse::<f64>().ok()
 }
