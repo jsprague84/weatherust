@@ -171,7 +171,7 @@ Publish images (CI):
 - `DOCKERMON_IGNORE` (optional) — comma-separated list of container names/IDs/service names to skip (case-insensitive).
 - Compose integration:
   - Service mounts the Docker socket read-only.
-- Ofelia mounts the host `.env` inside the container at `/ofelia/.env`; pointing `env-file=/ofelia/.env` at each job-run keeps scheduled runs aligned with the service dotenv entries.
+- Ofelia mounts the host `.env` inside the container at `/ofelia/.env`, and the job-run labels reference the host path (`env-file=${ENV_FILE_HOST_PATH}`) so Docker loads the same values when starting one-off containers.
 - Job mounts the Docker socket via a single `volume` label.
 - Tag override: set `DOCKERMON_TAG` in `.env` for pre-merge testing.
 
