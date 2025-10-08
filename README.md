@@ -171,11 +171,11 @@ Publish images (CI):
 - `DOCKERMON_IGNORE` (optional) — comma-separated list of container names/IDs/service names to skip (case-insensitive).
 - Compose integration:
   - Service mounts the Docker socket read-only.
-- Ofelia mounts the host `.env` inside the container at `/ofelia/.env`, and the job-run labels reference the host path (`env-file=${ENV_FILE_HOST_PATH}`) so Docker loads the same values when starting one-off containers.
+- Ofelia mounts the host `.env` inside the container at `/ofelia/.env`, and the job-run labels reference the host path (`env-file=${ENV_FILE_HOST_PATH}`) plus explicit `env=` entries so Docker loads the same values when starting one-off containers.
 - Job mounts the Docker socket via a single `volume` label.
 - Tag override: set `DOCKERMON_TAG` in `.env` for pre-merge testing.
 
 Runtime pattern (robust):
-- This compose keeps a lightweight `dockermon_runner` container (same image, entrypoint overridden to `sleep infinity`) alive so Ofelia can `job-exec` into it and automatically inherit the full `.env` plus socket mount. Use the `DOCKERMON_IGNORE` env (or `--ignore` CLI flag) to suppress noise from short-lived containers (e.g., the one-off weather/speedy jobs).
+- This compose keeps a lightweight `dockermon_runner` container (same image, entrypoint overridden to `sleep infinity`) alive so Ofelia can `job-exec` into it and automatically inherit the full `.env` plus socket mount. Use the `DOCKERMON_IGNORE` env (or `--ignore` CLI flag) to suppress noise from short-lived containers (e.g., the one-off weather/speedy jobs). Weather/speedy job-runs specify `env-file=${ENV_FILE_HOST_PATH}` and a compact `env=` list to guarantee keys arrive even if env-file parsing differs across Ofelia releases.
   - `ofelia.job-exec.dockermon.container=dockermon_runner`
   - `ofelia.job-exec.dockermon.command=/app/dockermon --quiet`
