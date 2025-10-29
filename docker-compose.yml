@@ -47,15 +47,13 @@ services:
       - "ofelia.job-run.weatherust.schedule=0 30 5 * * *"
       - "ofelia.job-run.weatherust.image=ghcr.io/jsprague84/weatherust:${WEATHERUST_TAG:-latest}"
       - "ofelia.job-run.weatherust.command=--zip 52726 --units imperial --quiet"
-      - "ofelia.job-run.weatherust.env-file=${ENV_FILE_HOST_PATH}"
-      - "ofelia.job-run.weatherust.env=OWM_API_KEY=${OWM_API_KEY}|GOTIFY_KEY=${GOTIFY_KEY}|GOTIFY_URL=${GOTIFY_URL}|DEFAULT_ZIP=${DEFAULT_ZIP}|DEFAULT_LOCATION=${DEFAULT_LOCATION}|DEFAULT_UNITS=${DEFAULT_UNITS}"
+      - "ofelia.job-run.weatherust.env-file=/ofelia/.env"
 
-      # Speedtest daily at 02:10 (disabled until image exists)
+      # Speedtest daily at 02:10
       - "ofelia.job-run.speedynotify.schedule=0 10 2 * * *"
       - "ofelia.job-run.speedynotify.image=ghcr.io/jsprague84/speedynotify:${SPEEDYNOTIFY_TAG:-latest}"
       - "ofelia.job-run.speedynotify.command=--quiet --min-down ${SPEEDTEST_MIN_DOWN} --min-up ${SPEEDTEST_MIN_UP}"
-      - "ofelia.job-run.speedynotify.env-file=${ENV_FILE_HOST_PATH}"
-      - "ofelia.job-run.speedynotify.env=GOTIFY_KEY=${GOTIFY_KEY}|GOTIFY_URL=${GOTIFY_URL}|SPEEDY_GOTIFY_KEY=${SPEEDY_GOTIFY_KEY}|SPEEDTEST_MIN_DOWN=${SPEEDTEST_MIN_DOWN}|SPEEDTEST_MIN_UP=${SPEEDTEST_MIN_UP}|SPEEDTEST_SERVER_ID=${SPEEDTEST_SERVER_ID}"
+      - "ofelia.job-run.speedynotify.env-file=/ofelia/.env"
 
       # Docker monitor every 5 minutes (exec inside runner to inherit env_file)
       - "ofelia.job-exec.dockermon.schedule=0 */5 * * * *"
