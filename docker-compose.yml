@@ -21,7 +21,23 @@ services:
       - /var/run/docker.sock:/var/run/docker.sock:ro
     restart: "no"
 
-  # Long-running runner so Ofelia can exec with full env inherited
+  # Long-running runners so Ofelia can exec with full env inherited
+  weatherust_runner:
+    image: ghcr.io/jsprague84/weatherust:${WEATHERUST_TAG:-latest}
+    container_name: weatherust_runner
+    env_file:
+      - .env
+    entrypoint: ["/bin/sh", "-c", "sleep infinity"]
+    restart: unless-stopped
+
+  speedynotify_runner:
+    image: ghcr.io/jsprague84/speedynotify:${SPEEDYNOTIFY_TAG:-latest}
+    container_name: speedynotify_runner
+    env_file:
+      - .env
+    entrypoint: ["/bin/sh", "-c", "sleep infinity"]
+    restart: unless-stopped
+
   dockermon_runner:
     image: ghcr.io/jsprague84/dockermon:${DOCKERMON_TAG:-latest}
     container_name: dockermon_runner
@@ -44,16 +60,14 @@ services:
     command: daemon --docker
     labels:
       - "ofelia.enabled=true"
-      - "ofelia.job-run.weatherust.schedule=0 30 5 * * *"
-      - "ofelia.job-run.weatherust.image=ghcr.io/jsprague84/weatherust:${WEATHERUST_TAG:-latest}"
-      - "ofelia.job-run.weatherust.command=--zip 52726 --units imperial --quiet"
-      - "ofelia.job-run.weatherust.env-file=${ENV_FILE_HOST_PATH}"
+      - "ofelia.job-exec.weatherust.schedule=0 30 5 * * *"
+      - "ofelia.job-exec.weatherust.container=weatherust_runner"
+      - "ofelia.job-exec.weatherust.command=/app/weatherust --zip 52726 --units imperial --quiet"
 
       # Speedtest daily at 02:10
-      - "ofelia.job-run.speedynotify.schedule=0 10 2 * * *"
-      - "ofelia.job-run.speedynotify.image=ghcr.io/jsprague84/speedynotify:${SPEEDYNOTIFY_TAG:-latest}"
-      - "ofelia.job-run.speedynotify.command=--quiet --min-down ${SPEEDTEST_MIN_DOWN} --min-up ${SPEEDTEST_MIN_UP}"
-      - "ofelia.job-run.speedynotify.env-file=${ENV_FILE_HOST_PATH}"
+      - "ofelia.job-exec.speedynotify.schedule=0 10 2 * * *"
+      - "ofelia.job-exec.speedynotify.container=speedynotify_runner"
+      - "ofelia.job-exec.speedynotify.command=/app/speedynotify --quiet --min-down ${SPEEDTEST_MIN_DOWN} --min-up ${SPEEDTEST_MIN_UP}"
 
       # Docker monitor every 5 minutes (exec inside runner to inherit env_file)
       - "ofelia.job-exec.dockermon.schedule=0 */5 * * * *"
