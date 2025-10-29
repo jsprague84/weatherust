@@ -47,13 +47,13 @@ services:
       - "ofelia.job-run.weatherust.schedule=0 30 5 * * *"
       - "ofelia.job-run.weatherust.image=ghcr.io/jsprague84/weatherust:${WEATHERUST_TAG:-latest}"
       - "ofelia.job-run.weatherust.command=--zip 52726 --units imperial --quiet"
-      - "ofelia.job-run.weatherust.env-file=/ofelia/.env"
+      - "ofelia.job-run.weatherust.env-file=${ENV_FILE_HOST_PATH}"
 
       # Speedtest daily at 02:10
       - "ofelia.job-run.speedynotify.schedule=0 10 2 * * *"
       - "ofelia.job-run.speedynotify.image=ghcr.io/jsprague84/speedynotify:${SPEEDYNOTIFY_TAG:-latest}"
       - "ofelia.job-run.speedynotify.command=--quiet --min-down ${SPEEDTEST_MIN_DOWN} --min-up ${SPEEDTEST_MIN_UP}"
-      - "ofelia.job-run.speedynotify.env-file=/ofelia/.env"
+      - "ofelia.job-run.speedynotify.env-file=${ENV_FILE_HOST_PATH}"
 
       # Docker monitor every 5 minutes (exec inside runner to inherit env_file)
       - "ofelia.job-exec.dockermon.schedule=0 */5 * * * *"
