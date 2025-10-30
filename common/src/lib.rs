@@ -21,14 +21,32 @@ pub async fn send_gotify(
 
     // Resolve key with precedence:
     // 1) GOTIFY_KEY (explicit; caller may set this)
-    // 2) DOCKERMON_GOTIFY_KEY (tool-specific)
-    // 3) SPEEDY_GOTIFY_KEY (tool-specific)
-    // 4) GOTIFY_KEY_FILE (path to file containing only the token)
+    // 2) WEATHERUST_GOTIFY_KEY (tool-specific)
+    // 3) UPDATEMON_GOTIFY_KEY (tool-specific)
+    // 4) DOCKERMON_GOTIFY_KEY (tool-specific)
+    // 5) SPEEDY_GOTIFY_KEY (tool-specific)
+    // 6) GOTIFY_KEY_FILE (path to file containing only the token)
     let mut key_source = "";
     let gotify_key = if let Ok(v) = env::var("GOTIFY_KEY") {
         let v = v.trim().to_string();
         if !v.is_empty() {
             key_source = "GOTIFY_KEY";
+            v
+        } else {
+            String::new()
+        }
+    } else if let Ok(v) = env::var("WEATHERUST_GOTIFY_KEY") {
+        let v = v.trim().to_string();
+        if !v.is_empty() {
+            key_source = "WEATHERUST_GOTIFY_KEY";
+            v
+        } else {
+            String::new()
+        }
+    } else if let Ok(v) = env::var("UPDATEMON_GOTIFY_KEY") {
+        let v = v.trim().to_string();
+        if !v.is_empty() {
+            key_source = "UPDATEMON_GOTIFY_KEY";
             v
         } else {
             String::new()
@@ -65,7 +83,7 @@ pub async fn send_gotify(
     };
 
     if gotify_key.is_empty() {
-        eprintln!("GOTIFY_KEY not set (also checked DOCKERMON_GOTIFY_KEY/SPEEDY_GOTIFY_KEY); skipping Gotify notification.");
+        eprintln!("GOTIFY_KEY not set (also checked WEATHERUST_GOTIFY_KEY/UPDATEMON_GOTIFY_KEY/DOCKERMON_GOTIFY_KEY/SPEEDY_GOTIFY_KEY); skipping Gotify notification.");
         return Ok(());
     }
 
