@@ -8,6 +8,7 @@ members = [
     "common",
     "speedynotify",
     "dockermon",
+    "updatemon",
 ]
 
 [dependencies]
