@@ -20,7 +20,7 @@ struct Args {
     #[arg(long)]
     servers: Option<String>,
 
-    /// Check local system only
+    /// Include local system in the check (can be combined with --servers)
     #[arg(long)]
     local: bool,
 
@@ -46,37 +46,67 @@ async fn main() -> Result<()> {
     let client = http_client();
 
     // Parse server list from args or env
-    let servers = if args.local {
-        vec![Server::local()]
-    } else {
-        let server_str = args.servers
-            .or_else(|| std::env::var("UPDATE_SERVERS").ok())
-            .unwrap_or_default();
-        parse_servers(&server_str)?
-    };
+    let mut servers = Vec::new();
+
+    // Add remote servers if specified
+    let server_str = args.servers
+        .or_else(|| std::env::var("UPDATE_SERVERS").ok())
+        .unwrap_or_default();
+
+    if !server_str.is_empty() {
+        servers.extend(parse_servers(&server_str)?);
+    }
+
+    // Add localhost if --local flag is set
+    if args.local {
+        servers.push(Server::local());
+    }
 
     let ssh_key = args.ssh_key
         .or_else(|| std::env::var("UPDATE_SSH_KEY").ok());
 
     if servers.is_empty() {
-        eprintln!("No servers configured. Use --servers or UPDATE_SERVERS env var.");
-        eprintln!("Example: UPDATE_SERVERS=server1:ubuntu@192.168.1.10,server2:admin@192.168.1.20");
+        eprintln!("No servers configured. Use --local and/or --servers or UPDATE_SERVERS env var.");
+        eprintln!("Examples:");
+        eprintln!("  --local                                           (check local system only)");
+        eprintln!("  --servers server1:ubuntu@192.168.1.10             (check remote server)");
+        eprintln!("  --local --servers server1:ubuntu@192.168.1.10     (check both local and remote)");
         std::process::exit(1);
     }
 
-    // Check each server for updates
-    let mut all_reports = Vec::new();
+    // Check each server for updates (in parallel using tokio tasks)
+    let mut tasks = Vec::new();
 
     for server in servers {
-        if !args.quiet {
+        let ssh_key_clone = ssh_key.clone();
+        let docker_check = args.docker;
+        let quiet = args.quiet;
+
+        if !quiet {
             println!("Checking {}...", server.name);
         }
 
-        match check_server(&server, args.docker, ssh_key.as_deref()).await {
+        // Spawn concurrent task for each server
+        let task = tokio::spawn(async move {
+            match check_server(&server, docker_check, ssh_key_clone.as_deref()).await {
+                Ok(report) => report,
+                Err(e) => {
+                    eprintln!("Error checking {}: {}", server.name, e);
+                    format!("❌ {} - Error: {}", server.name, e)
+                }
+            }
+        });
+
+        tasks.push(task);
+    }
+
+    // Wait for all tasks to complete
+    let mut all_reports = Vec::new();
+    for task in tasks {
+        match task.await {
             Ok(report) => all_reports.push(report),
             Err(e) => {
-                eprintln!("Error checking {}: {}", server.name, e);
-                all_reports.push(format!("❌ {} - Error: {}", server.name, e));
+                eprintln!("Task join error: {}", e);
             }
         }
     }

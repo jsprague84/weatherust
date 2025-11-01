@@ -6,8 +6,9 @@ pub struct DnfChecker;
 impl UpdateChecker for DnfChecker {
     fn check_command(&self) -> (&str, Vec<&str>) {
         // dnf check-update returns exit code 100 if updates available
-        // We use --quiet to reduce output noise
-        ("dnf", vec!["check-update", "--quiet"])
+        // Use --cacheonly to avoid refreshing repos (much faster)
+        // Cache refresh is handled automatically in the background (see executor)
+        ("dnf", vec!["check-update", "--quiet", "--cacheonly"])
     }
 
     fn parse_updates(&self, output: &str) -> Vec<String> {

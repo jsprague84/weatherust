@@ -1,5 +1,6 @@
 use anyhow::{anyhow, Result};
 use tokio::process::Command;
+use tokio::time::{timeout, Duration};
 
 use crate::checkers::UpdateChecker;
 use crate::types::{PackageManager, Server};
@@ -39,11 +40,14 @@ impl RemoteExecutor {
     async fn execute_local(&self, cmd: &str, args: &[&str]) -> Result<String> {
         log::debug!("Executing locally: {} {}", cmd, args.join(" "));
 
-        let output = Command::new(cmd)
-            .args(args)
-            .output()
-            .await
-            .map_err(|e| anyhow!("Failed to execute {}: {}", cmd, e))?;
+        // Add timeout to prevent hanging (2 minutes max)
+        let output = timeout(
+            Duration::from_secs(120),
+            Command::new(cmd).args(args).output()
+        )
+        .await
+        .map_err(|_| anyhow!("Command timed out after 120s: {} {}", cmd, args.join(" ")))?
+        .map_err(|e| anyhow!("Failed to execute {}: {}", cmd, e))?;
 
         // Note: Some commands use non-zero exit codes to indicate updates available
         // (e.g., dnf check-update returns 100 if updates exist)
@@ -64,11 +68,23 @@ impl RemoteExecutor {
         let ssh_host = self.server.ssh_host.as_ref()
             .ok_or_else(|| anyhow!("No SSH host configured"))?;
 
-        // Build the remote command string
+        // Build the remote command string with proper shell escaping
+        // We need to quote arguments properly for the remote shell
         let remote_cmd = if args.is_empty() {
             cmd.to_string()
         } else {
-            format!("{} {}", cmd, args.join(" "))
+            // Quote each argument that might contain spaces or special chars
+            let quoted_args: Vec<String> = args.iter()
+                .map(|arg| {
+                    // If arg contains spaces or special chars, quote it
+                    if arg.contains(' ') || arg.contains('*') || arg.contains('$') {
+                        format!("'{}'", arg.replace('\'', "'\\''"))
+                    } else {
+                        arg.to_string()
+                    }
+                })
+                .collect();
+            format!("{} {}", cmd, quoted_args.join(" "))
         };
 
         log::debug!("Executing via SSH on {}: {}", ssh_host, remote_cmd);
@@ -87,10 +103,14 @@ impl RemoteExecutor {
 
         ssh_cmd.arg(ssh_host).arg(remote_cmd);
 
-        let output = ssh_cmd
-            .output()
-            .await
-            .map_err(|e| anyhow!("Failed to SSH to {}: {}", ssh_host, e))?;
+        // Add timeout to prevent SSH from hanging (2 minutes max)
+        let output = timeout(
+            Duration::from_secs(120),
+            ssh_cmd.output()
+        )
+        .await
+        .map_err(|_| anyhow!("SSH command timed out after 120s to {}", ssh_host))?
+        .map_err(|e| anyhow!("Failed to SSH to {}: {}", ssh_host, e))?;
 
         if !output.status.success() {
             let stderr = String::from_utf8_lossy(&output.stderr);
@@ -126,6 +146,20 @@ impl RemoteExecutor {
     /// Check for updates using the given checker
     pub async fn check_updates(&self, checker: &Box<dyn UpdateChecker>) -> Result<Vec<String>> {
         let (cmd, args) = checker.check_command();
+
+        // If this is DNF with --cacheonly, refresh the cache in the background for next run
+        // This keeps the current check fast while ensuring the cache stays fresh
+        if cmd == "dnf" && args.contains(&"--cacheonly") {
+            let server = self.server.clone();
+            let ssh_key = self.ssh_key.clone();
+
+            tokio::spawn(async move {
+                if let Ok(executor) = RemoteExecutor::new(server.clone(), ssh_key.as_deref()) {
+                    log::debug!("Refreshing DNF cache in background on {}", server.name);
+                    let _ = executor.execute("dnf", &["makecache", "--quiet"]).await;
+                }
+            });
+        }
 
         let output = self.execute(cmd, &args).await?;
         let updates = checker.parse_updates(&output);
