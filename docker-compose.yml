@@ -21,6 +21,16 @@ services:
       - /var/run/docker.sock:/var/run/docker.sock:ro
     restart: "no"
 
+  # Update monitor: checks OS packages and Docker images across servers
+  updatemon:
+    image: ghcr.io/jsprague84/updatemon:${UPDATEMON_TAG:-latest}
+    env_file:
+      - .env
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - ${HOME}/.ssh:/root/.ssh:ro
+    restart: "no"
+
   # Long-running runners so Ofelia can exec with full env inherited
   weatherust_runner:
     image: ghcr.io/jsprague84/weatherust:${WEATHERUST_TAG:-latest}
@@ -45,6 +55,17 @@ services:
       - .env
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock:ro
+    entrypoint: ["/bin/sh", "-c", "sleep infinity"]
+    restart: unless-stopped
+
+  updatemon_runner:
+    image: ghcr.io/jsprague84/updatemon:${UPDATEMON_TAG:-latest}
+    container_name: updatemon_runner
+    env_file:
+      - .env
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - ${HOME}/.ssh:/root/.ssh:ro
     entrypoint: ["/bin/sh", "-c", "sleep infinity"]
     restart: unless-stopped
 
@@ -73,3 +94,8 @@ services:
       - "ofelia.job-exec.dockermon.schedule=0 */5 * * * *"
       - "ofelia.job-exec.dockermon.container=dockermon_runner"
       - "ofelia.job-exec.dockermon.command=/app/dockermon --quiet"
+
+      # Update monitor daily at 03:00 (checks OS packages and Docker images)
+      - "ofelia.job-exec.updatemon.schedule=0 0 3 * * *"
+      - "ofelia.job-exec.updatemon.container=updatemon_runner"
+      - "ofelia.job-exec.updatemon.command=/app/updatemon --local --docker --quiet"
