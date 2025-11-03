@@ -129,10 +129,11 @@ impl RemoteExecutor {
         for pm in PackageManager::all() {
             let binary = pm.binary();
 
-            // Check if the command exists
-            let check_cmd = format!("command -v {}", binary);
+            // Check if the binary exists using full path
+            // Use 'test -x' which works in minimal SSH environments without full PATH
+            let check_cmd = format!("test -x /usr/bin/{} && echo found", binary);
             match self.execute("sh", &["-c", &check_cmd]).await {
-                Ok(output) if !output.trim().is_empty() => {
+                Ok(output) if output.trim() == "found" => {
                     log::info!("Detected package manager: {:?}", pm);
                     return Ok(pm);
                 }
@@ -149,14 +150,14 @@ impl RemoteExecutor {
 
         // If this is DNF with --cacheonly, refresh the cache in the background for next run
         // This keeps the current check fast while ensuring the cache stays fresh
-        if cmd == "dnf" && args.contains(&"--cacheonly") {
+        if cmd == "/usr/bin/dnf" && args.contains(&"--cacheonly") {
             let server = self.server.clone();
             let ssh_key = self.ssh_key.clone();
 
             tokio::spawn(async move {
                 if let Ok(executor) = RemoteExecutor::new(server.clone(), ssh_key.as_deref()) {
                     log::debug!("Refreshing DNF cache in background on {}", server.name);
-                    let _ = executor.execute("dnf", &["makecache", "--quiet"]).await;
+                    let _ = executor.execute("/usr/bin/dnf", &["makecache", "--quiet"]).await;
                 }
             });
         }

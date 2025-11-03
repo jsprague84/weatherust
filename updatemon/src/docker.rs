@@ -33,9 +33,9 @@ struct ImageInfo {
 
 /// Check for Docker image updates
 pub async fn check_docker_updates(executor: &RemoteExecutor) -> Result<Vec<DockerImage>> {
-    // Get list of images
+    // Get list of images (use full path for SSH compatibility)
     let output = executor
-        .execute_command("docker", &["images", "--format", "{{json .}}"])
+        .execute_command("/usr/bin/docker", &["images", "--format", "{{json .}}"])
         .await?;
 
     if output.trim().is_empty() {

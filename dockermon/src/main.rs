@@ -1,6 +1,6 @@
 use bollard::models::HealthStatusEnum;
 use clap::Parser;
-use common::{dotenv_init, http_client, send_gotify};
+use common::{dotenv_init, http_client, send_gotify_dockermon};
 use futures_util::StreamExt;
 use std::collections::HashSet;
 use std::env;
@@ -181,7 +181,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     if notify_always || had_issues {
         let client = http_client();
-        if let Err(e) = send_gotify(&client, title, &body).await {
+        if let Err(e) = send_gotify_dockermon(&client, title, &body).await {
             eprintln!("Gotify send error: {e}");
         }
     }

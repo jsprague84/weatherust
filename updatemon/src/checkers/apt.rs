@@ -8,7 +8,8 @@ impl UpdateChecker for AptChecker {
         // apt list --upgradable
         // Note: We skip "apt-get update" to avoid modifying system state
         // Users should run this manually or via cron before running updatemon
-        ("apt", vec!["list", "--upgradable"])
+        // Use full path for SSH compatibility
+        ("/usr/bin/apt", vec!["list", "--upgradable"])
     }
 
     fn parse_updates(&self, output: &str) -> Vec<String> {

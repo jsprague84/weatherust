@@ -8,7 +8,8 @@ impl UpdateChecker for DnfChecker {
         // dnf check-update returns exit code 100 if updates available
         // Use --cacheonly to avoid refreshing repos (much faster)
         // Cache refresh is handled automatically in the background (see executor)
-        ("dnf", vec!["check-update", "--quiet", "--cacheonly"])
+        // Use full path for SSH compatibility
+        ("/usr/bin/dnf", vec!["check-update", "--quiet", "--cacheonly"])
     }
 
     fn parse_updates(&self, output: &str) -> Vec<String> {

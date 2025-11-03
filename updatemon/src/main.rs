@@ -1,6 +1,6 @@
 use anyhow::Result;
 use clap::Parser;
-use common::{dotenv_init, http_client, send_gotify};
+use common::{dotenv_init, http_client, send_gotify_updatemon};
 
 mod types;
 mod checkers;
@@ -120,7 +120,7 @@ async fn main() -> Result<()> {
     }
 
     // Send to Gotify
-    if let Err(e) = send_gotify(&client, &summary, &details).await {
+    if let Err(e) = send_gotify_updatemon(&client, &summary, &details).await {
         eprintln!("Gotify send error: {e}");
     }
 

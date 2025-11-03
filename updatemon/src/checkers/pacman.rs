@@ -7,8 +7,8 @@ impl UpdateChecker for PacmanChecker {
     fn check_command(&self) -> (&str, Vec<&str>) {
         // checkupdates is a script that comes with pacman
         // It's safer than 'pacman -Qu' which requires sync
-        // Falls back to "pacman -Qu" if checkupdates not available
-        ("checkupdates", vec![])
+        // Use full path for SSH compatibility
+        ("/usr/bin/checkupdates", vec![])
     }
 
     fn parse_updates(&self, output: &str) -> Vec<String> {
