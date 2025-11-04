@@ -110,10 +110,11 @@ async fn main() -> Result<()> {
     if let Some(server_names) = &args.servers {
         // User specified servers - resolve names from registry
         servers.extend(resolve_servers(server_names, &server_registry)?);
-    } else {
-        // No --servers flag - use all servers from UPDATE_SERVERS
+    } else if !args.local {
+        // No --servers and no --local - use all servers from UPDATE_SERVERS
         servers.extend(server_registry.values().cloned());
     }
+    // If only --local is set, servers stays empty (will add localhost below)
 
     if args.local {
         servers.push(Server::local());
@@ -373,7 +374,7 @@ fn print_examples() {
     println!("  --local                    Update localhost only");
     println!("  --servers \"name1,name2\"    Update specific servers by name");
     println!("  (no flags)                 Update all servers from UPDATE_SERVERS");
-    println!("  --local --servers \"name\"   Update localhost AND named servers");
+    println!("  --local --servers \"name\"   Update both localhost AND named servers");
 }
 
 fn format_summary(reports: &[String], dry_run: bool) -> String {

@@ -168,11 +168,11 @@ updatectl all --yes
 
 | Flag | Behavior |
 |------|----------|
-| `--local` | Update localhost only |
+| `--local` | Update **localhost only** |
 | `--servers "name1,name2"` | Update specific servers by name |
 | `--servers "name:user@host"` | Update ad-hoc server (not in UPDATE_SERVERS) |
-| *(no flags)* | Update all servers from UPDATE_SERVERS |
-| `--local --servers "name"` | Update localhost AND named servers |
+| *(no flags)* | Update **all servers** from UPDATE_SERVERS |
+| `--local --servers "name"` | Update **both** localhost AND named servers |
 
 ## Confirmation Prompts
 

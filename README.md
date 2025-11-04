@@ -224,17 +224,20 @@ source ~/.bashrc
 # List configured servers
 updatectl list servers
 
-# Check for updates (automated daily)
-docker compose exec updatemon_runner /app/updatemon --local --docker
+# Check for updates on all servers (automated daily)
+docker compose exec updatemon_runner /app/updatemon --docker
 
-# Preview what would be updated (safe)
+# Preview what would be updated on localhost (safe)
 updatectl all --dry-run --local
 
 # Apply updates to specific server
 updatectl os --yes --servers "Cloud VM1"
 
-# Update Docker images on localhost
+# Update Docker images on localhost only
 updatectl docker --all --yes --local
+
+# Update all configured servers
+updatectl os --yes
 ```
 
 Workflow:
