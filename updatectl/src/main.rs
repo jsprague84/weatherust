@@ -18,8 +18,9 @@ struct Args {
     #[command(subcommand)]
     command: Commands,
 
-    /// Comma-separated list of servers (name:user@host or just user@host)
-    /// If not specified, uses UPDATE_SERVERS env var
+    /// Comma-separated server names or connection strings
+    /// Names are looked up from UPDATE_SERVERS (run 'list servers' to see available)
+    /// Examples: --servers "Cloud VM1" or --servers "myserver:user@host"
     #[arg(long, global = true)]
     servers: Option<String>,
 
@@ -62,6 +63,20 @@ enum Commands {
 
     /// Update both OS packages and Docker images
     All,
+
+    /// List available servers or show examples
+    List {
+        #[command(subcommand)]
+        what: ListCommands,
+    },
+}
+
+#[derive(Subcommand, Debug, Clone)]
+enum ListCommands {
+    /// List configured servers from UPDATE_SERVERS
+    Servers,
+    /// Show usage examples
+    Examples,
 }
 
 #[tokio::main]
@@ -72,15 +87,32 @@ async fn main() -> Result<()> {
     let args = Args::parse();
     let client = http_client();
 
+    // Build server registry from UPDATE_SERVERS env var for name lookups
+    let server_registry = build_server_registry()?;
+
+    // Handle list commands early (no server connection needed)
+    if let Commands::List { what } = &args.command {
+        match what {
+            ListCommands::Servers => {
+                print_servers(&server_registry);
+                return Ok(());
+            }
+            ListCommands::Examples => {
+                print_examples();
+                return Ok(());
+            }
+        }
+    }
+
     // Parse server list from args or env
     let mut servers = Vec::new();
 
-    let server_str = args.servers
-        .or_else(|| std::env::var("UPDATE_SERVERS").ok())
-        .unwrap_or_default();
-
-    if !server_str.is_empty() {
-        servers.extend(parse_servers(&server_str)?);
+    if let Some(server_names) = &args.servers {
+        // User specified servers - resolve names from registry
+        servers.extend(resolve_servers(server_names, &server_registry)?);
+    } else {
+        // No --servers flag - use all servers from UPDATE_SERVERS
+        servers.extend(server_registry.values().cloned());
     }
 
     if args.local {
@@ -91,11 +123,15 @@ async fn main() -> Result<()> {
         .or_else(|| std::env::var("UPDATE_SSH_KEY").ok());
 
     if servers.is_empty() {
-        eprintln!("No servers configured. Use --local and/or --servers or UPDATE_SERVERS env var.");
-        eprintln!("Examples:");
-        eprintln!("  updatectl os --local");
-        eprintln!("  updatectl all --servers server1:ubuntu@192.168.1.10");
-        eprintln!("  updatectl docker --all --local --servers cloud-vm1:ubuntu@cloud.example.com");
+        eprintln!("No servers specified.");
+        eprintln!();
+        eprintln!("Available options:");
+        eprintln!("  updatectl list servers              Show configured servers");
+        eprintln!("  updatectl list examples             Show usage examples");
+        eprintln!("  updatectl os --local                Update localhost");
+        eprintln!("  updatectl os --servers \"name\"       Update named server");
+        eprintln!();
+        eprintln!("Configure servers in UPDATE_SERVERS environment variable.");
         std::process::exit(1);
     }
 
@@ -118,6 +154,10 @@ async fn main() -> Result<()> {
                 }
             }
             Commands::All => println!("Operation: OS packages + Docker images"),
+            Commands::List { .. } => {
+                // Already handled early - this shouldn't be reached
+                unreachable!("List commands should be handled before confirmation prompt")
+            }
         }
         println!();
         print!("Continue? [y/N] ");
@@ -220,19 +260,120 @@ async fn execute_update(
             let docker_result = update_docker(&executor, true, None, dry_run).await?;
             report_lines.push(format!("   Docker Updates: {}", docker_result));
         }
+        Commands::List { .. } => {
+            // Already handled early - this shouldn't be reached
+            unreachable!("List commands should be handled before server execution")
+        }
     }
 
     Ok(report_lines.join("\n"))
 }
 
-fn parse_servers(input: &str) -> Result<Vec<Server>> {
-    if input.is_empty() {
-        return Ok(Vec::new());
+/// Build a registry of server name -> Server from UPDATE_SERVERS env var
+fn build_server_registry() -> Result<std::collections::HashMap<String, Server>> {
+    use std::collections::HashMap;
+
+    let server_str = std::env::var("UPDATE_SERVERS").unwrap_or_default();
+    let mut registry = HashMap::new();
+
+    if !server_str.is_empty() {
+        for server_def in server_str.split(',') {
+            let server = Server::parse(server_def.trim())?;
+            registry.insert(server.name.clone(), server);
+        }
     }
 
-    input.split(',')
-        .map(|s| Server::parse(s.trim()))
-        .collect()
+    Ok(registry)
+}
+
+/// Resolve comma-separated server names/specs using the registry
+/// Supports:
+/// - Server names: "Cloud VM1" -> looks up in registry
+/// - Full specs: "myserver:user@host" -> parses directly
+/// - Mixed: "Cloud VM1,newserver:admin@1.2.3.4"
+fn resolve_servers(
+    input: &str,
+    registry: &std::collections::HashMap<String, Server>,
+) -> Result<Vec<Server>> {
+    let mut servers = Vec::new();
+
+    for name in input.split(',') {
+        let name = name.trim();
+
+        // First try registry lookup by name
+        if let Some(server) = registry.get(name) {
+            servers.push(server.clone());
+        } else if name.contains('@') || name.contains(':') {
+            // Looks like a connection string - parse it directly
+            servers.push(Server::parse(name)?);
+        } else {
+            return Err(anyhow::anyhow!(
+                "Unknown server '{}'. Run 'updatectl list servers' to see available servers.",
+                name
+            ));
+        }
+    }
+
+    Ok(servers)
+}
+
+/// Print configured servers
+fn print_servers(registry: &std::collections::HashMap<String, Server>) {
+    if registry.is_empty() {
+        println!("No servers configured in UPDATE_SERVERS.");
+        println!();
+        println!("Set UPDATE_SERVERS in your .env file:");
+        println!("  UPDATE_SERVERS=server1:user@host1,server2:user@host2");
+        return;
+    }
+
+    println!("Configured servers ({}):", registry.len());
+    println!();
+
+    let mut servers: Vec<_> = registry.values().collect();
+    servers.sort_by(|a, b| a.name.cmp(&b.name));
+
+    for server in &servers {
+        println!("  {} → {}", server.name, server.display_host());
+    }
+
+    println!();
+    println!("Usage:");
+    println!("  updatectl os --servers \"{}\"", servers[0].name);
+    if servers.len() > 1 {
+        println!("  updatectl all --servers \"{},{}\"", servers[0].name, servers[1].name);
+    }
+}
+
+/// Print usage examples
+fn print_examples() {
+    println!("Common usage examples:");
+    println!();
+    println!("List available servers:");
+    println!("  updatectl list servers");
+    println!();
+    println!("Preview changes (dry-run):");
+    println!("  updatectl all --dry-run --local");
+    println!("  updatectl os --dry-run --servers \"Cloud VM1\"");
+    println!();
+    println!("Update OS packages:");
+    println!("  updatectl os --yes --local");
+    println!("  updatectl os --yes --servers \"Cloud VM1,Cloud VM2\"");
+    println!();
+    println!("Update Docker images:");
+    println!("  updatectl docker --all --yes --local");
+    println!("  updatectl docker --all --yes --servers \"Cloud VM1\"");
+    println!("  updatectl docker --images nginx:latest,redis:latest --yes --local");
+    println!();
+    println!("Update everything:");
+    println!("  updatectl all --yes --local");
+    println!("  updatectl all --yes --servers \"Cloud VM1\"");
+    println!();
+    println!("Server targeting:");
+    println!("  --local                    Update localhost only");
+    println!("  --servers \"name1,name2\"    Update specific servers by name");
+    println!("  (no flags)                 Update all servers from UPDATE_SERVERS");
+    println!("  --local --servers \"name\"   Update localhost AND named servers");
 }
 
 fn format_summary(reports: &[String], dry_run: bool) -> String {
