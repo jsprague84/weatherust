@@ -53,6 +53,14 @@ pub async fn send_gotify_speedynotify(
     send_gotify_with_key(client, title, body, "SPEEDY_GOTIFY_KEY").await
 }
 
+pub async fn send_gotify_updatectl(
+    client: &Client,
+    title: &str,
+    body: &str,
+) -> Result<(), Box<dyn std::error::Error>> {
+    send_gotify_with_key(client, title, body, "UPDATECTL_GOTIFY_KEY").await
+}
+
 // Internal helper: checks a specific key, then GOTIFY_KEY_FILE fallback
 async fn send_gotify_with_key(
     client: &Client,

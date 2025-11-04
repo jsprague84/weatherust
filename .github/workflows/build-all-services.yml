@@ -24,6 +24,8 @@ jobs:
             dockerfile: Dockerfile.speedynotify
           - name: updatemon
             dockerfile: Dockerfile.updatemon
+          - name: updatectl
+            dockerfile: Dockerfile.updatectl
     steps:
       - name: Checkout
         uses: actions/checkout@v4

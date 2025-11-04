@@ -1,0 +1,24 @@
+# Build updatectl for applying OS and Docker updates across servers
+
+FROM rust:1.90-bookworm AS builder
+WORKDIR /app
+
+# Copy full workspace so Cargo can resolve all members reliably
+COPY . .
+RUN cargo build -p updatectl --release
+
+FROM debian:12-slim AS runtime
+WORKDIR /app
+
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends \
+       ca-certificates \
+       openssh-client \
+       docker.io \
+       sudo \
+    && rm -rf /var/lib/apt/lists/*
+
+COPY --from=builder /app/target/release/updatectl /app/updatectl
+
+ENV RUST_LOG=info
+ENTRYPOINT ["/app/updatectl"]
