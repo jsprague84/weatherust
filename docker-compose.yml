@@ -69,6 +69,17 @@ services:
     entrypoint: ["/bin/sh", "-c", "sleep infinity"]
     restart: unless-stopped
 
+  updatectl_runner:
+    image: ghcr.io/jsprague84/updatectl:${UPDATECTL_TAG:-latest}
+    container_name: updatectl_runner
+    env_file:
+      - .env
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:rw
+      - ${HOME}/.ssh:/root/.ssh:ro
+    entrypoint: ["/bin/sh", "-c", "sleep infinity"]
+    restart: unless-stopped
+
   ofelia:
     image: mcuadros/ofelia:latest
     container_name: ofelia
@@ -99,3 +110,22 @@ services:
       - "ofelia.job-exec.updatemon.schedule=0 0 3 * * *"
       - "ofelia.job-exec.updatemon.container=updatemon_runner"
       - "ofelia.job-exec.updatemon.command=/app/updatemon --local --docker --quiet"
+
+      # Update controller - OPTIONAL automated updates (DISABLED by default)
+      # CAUTION: Auto-updates can break services. Test thoroughly before enabling.
+      # Uncomment the desired schedule(s) below to enable automated updates.
+      #
+      # Weekly OS updates only (Sundays at 04:00)
+      # - "ofelia.job-exec.updatectl-os.schedule=0 0 4 * * 0"
+      # - "ofelia.job-exec.updatectl-os.container=updatectl_runner"
+      # - "ofelia.job-exec.updatectl-os.command=/app/updatectl os --yes --local --quiet"
+      #
+      # Weekly Docker updates (Sundays at 04:30)
+      # - "ofelia.job-exec.updatectl-docker.schedule=0 30 4 * * 0"
+      # - "ofelia.job-exec.updatectl-docker.container=updatectl_runner"
+      # - "ofelia.job-exec.updatectl-docker.command=/app/updatectl docker --all --yes --local --quiet"
+      #
+      # Monthly full updates (1st of month at 05:00)
+      # - "ofelia.job-exec.updatectl-all.schedule=0 0 5 1 * *"
+      # - "ofelia.job-exec.updatectl-all.container=updatectl_runner"
+      # - "ofelia.job-exec.updatectl-all.command=/app/updatectl all --yes --local --quiet"
