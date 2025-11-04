@@ -179,3 +179,65 @@ Runtime pattern (robust):
 - This compose keeps a lightweight `dockermon_runner` container (same image, entrypoint overridden to `sleep infinity`) alive so Ofelia can `job-exec` into it and automatically inherit the full `.env` plus socket mount. Use the `DOCKERMON_IGNORE` env (or `--ignore` CLI flag) to suppress noise from short-lived containers (e.g., the one-off weather/speedy jobs). Weather/speedy job-runs specify `env-file=${ENV_FILE_HOST_PATH}` and a compact `env=` list to guarantee keys arrive even if env-file parsing differs across Ofelia releases.
   - `ofelia.job-exec.dockermon.container=dockermon_runner`
   - `ofelia.job-exec.dockermon.command=/app/dockermon --quiet`
+
+**Update Monitor (updatemon) & Update Controller (updatectl)**
+
+Two companion tools for managing updates across your infrastructure:
+
+**updatemon** - Multi-server update monitoring (read-only)
+- Checks OS packages (apt/dnf/pacman) and Docker images for available updates
+- Parallel execution across multiple servers via SSH
+- Gotify notifications with detailed update summaries
+- Runs daily (3:00 AM) to keep you informed
+- Safe for automation - never modifies anything
+- [Full documentation](updatemon/README.md)
+
+**updatectl** - Multi-server update controller (applies updates)
+- Apply OS package updates and pull Docker images across servers
+- Server name resolution for easy CLI usage
+- Interactive confirmation prompts (skip with `--yes` for automation)
+- Dry-run mode to preview changes before applying
+- Parallel execution with error isolation per server
+- Discovery commands: `list servers`, `list examples`
+- Automated updates via Ofelia (disabled by default for safety)
+- [Full documentation](updatectl/README.md)
+
+Configuration (shared between both tools):
+```bash
+# Server list (format: name:user@host or just user@host)
+UPDATE_SERVERS=Office-HP-WS:jsprague@192.168.1.189,Cloud VM1:ubuntu@cloud-vm1.js-node.com
+
+# SSH key for passwordless authentication
+UPDATE_SSH_KEY=/home/ubuntu/.ssh/id_ed25519
+
+# Gotify tokens (separate for each tool)
+UPDATEMON_GOTIFY_KEY=your_updatemon_token
+UPDATECTL_GOTIFY_KEY=your_updatectl_token
+```
+
+Quick start:
+```bash
+# Set up shell alias for easy CLI usage (recommended)
+echo 'alias updatectl="docker compose -f ~/docker-compose/weatherust/docker-compose.yml exec updatectl_runner /app/updatectl"' >> ~/.bashrc
+source ~/.bashrc
+
+# List configured servers
+updatectl list servers
+
+# Check for updates (automated daily)
+docker compose exec updatemon_runner /app/updatemon --local --docker
+
+# Preview what would be updated (safe)
+updatectl all --dry-run --local
+
+# Apply updates to specific server
+updatectl os --yes --servers "Cloud VM1"
+
+# Update Docker images on localhost
+updatectl docker --all --yes --local
+```
+
+Workflow:
+1. updatemon runs daily (automated) → sends Gotify notifications
+2. Review notifications to see what needs updating
+3. Run updatectl manually to apply updates (or enable automated schedule)
