@@ -96,25 +96,32 @@ async fn check_image_update(
     image_name: &str,
     tag: &str,
 ) -> Result<bool> {
-    // Get local image digest
+    // Get local image digest using docker inspect (more reliable than --digests)
     let local_output = executor
         .execute_command(
             "/usr/bin/docker",
             &[
-                "images",
-                "--digests",
-                "--format",
-                "{{.Digest}}",
+                "inspect",
                 &format!("{}:{}", image_name, tag),
+                "--format={{index .RepoDigests 0}}",
             ],
         )
         .await?;
 
-    let local_digest = local_output.trim();
-    if local_digest.is_empty() || local_digest == "<none>" {
-        log::debug!("No local digest found for {}:{}", image_name, tag);
+    let local_repo_digest = local_output.trim();
+    if local_repo_digest.is_empty() || local_repo_digest == "<no value>" {
+        log::debug!("No RepoDigest found for {}:{}", image_name, tag);
         return Ok(false); // Can't compare without local digest
     }
+
+    // RepoDigest format: "image@sha256:abc123..."
+    // Extract just the sha256:... part
+    let local_digest = if let Some(hash) = local_repo_digest.split('@').nth(1) {
+        hash
+    } else {
+        log::debug!("Could not parse RepoDigest for {}:{}: {}", image_name, tag, local_repo_digest);
+        return Ok(false);
+    };
 
     log::debug!("Local digest for {}:{} is {}", image_name, tag, local_digest);
 
@@ -131,22 +138,33 @@ async fn check_image_update(
         Ok(output) => {
             // Parse manifest JSON to extract digest
             if let Ok(manifest) = serde_json::from_str::<serde_json::Value>(&output) {
-                // Get the digest from config or the manifest itself
+                // Try multiple paths to find the digest:
+                // 1. config.digest (for image manifests)
+                // 2. For manifest lists, we need to look at the manifests array
                 let remote_digest = manifest
                     .get("config")
                     .and_then(|c| c.get("digest"))
                     .and_then(|d| d.as_str())
                     .or_else(|| {
-                        // For manifest lists, check if any platform differs
-                        manifest.get("digest").and_then(|d| d.as_str())
+                        // Check if this is a manifest list (multi-arch)
+                        // In that case, we should check if ANY platform has a different digest
+                        // For simplicity, we'll check the first manifest's digest
+                        manifest
+                            .get("manifests")
+                            .and_then(|m| m.as_array())
+                            .and_then(|arr| arr.first())
+                            .and_then(|first| first.get("digest"))
+                            .and_then(|d| d.as_str())
                     });
 
                 if let Some(digest) = remote_digest {
                     log::debug!("Remote digest for {}:{} is {}", image_name, tag, digest);
+                    log::debug!("Comparing: local='{}' vs remote='{}'", local_digest, digest);
                     // Update available if digests differ
                     Ok(digest != local_digest)
                 } else {
                     log::debug!("Could not parse digest from manifest for {}:{}", image_name, tag);
+                    log::debug!("Manifest structure: {}", serde_json::to_string_pretty(&manifest).unwrap_or_default());
                     Ok(false)
                 }
             } else {
