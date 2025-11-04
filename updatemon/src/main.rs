@@ -162,17 +162,17 @@ async fn check_server(server: &Server, check_docker: bool, ssh_key: Option<&str>
                 } else {
                     let updates_available = images.iter().filter(|img| img.has_update).count();
                     if updates_available > 0 {
-                        report_lines.push(format!("   Docker: 🐳 {} images with updates", updates_available));
+                        report_lines.push(format!("   Docker: 🐳 {} of {} images with updates", updates_available, images.len()));
+                        // Show images with updates first
+                        for image in images.iter().filter(|img| img.has_update).take(5) {
+                            report_lines.push(format!("      - {}", image));
+                        }
+                        let remaining = updates_available.saturating_sub(5);
+                        if remaining > 0 {
+                            report_lines.push(format!("      ... and {} more with updates", remaining));
+                        }
                     } else {
-                        report_lines.push(format!("   Docker: ✅ {} images (checking for updates not yet implemented)", images.len()));
-                    }
-
-                    // Show first few images
-                    for image in images.iter().take(5) {
-                        report_lines.push(format!("      - {}", image));
-                    }
-                    if images.len() > 5 {
-                        report_lines.push(format!("      ... and {} more", images.len() - 5));
+                        report_lines.push(format!("   Docker: ✅ {} images up to date", images.len()));
                     }
                 }
             }

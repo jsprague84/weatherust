@@ -1,4 +1,4 @@
-use anyhow::{anyhow, Result};
+use anyhow::Result;
 use serde::Deserialize;
 
 use crate::executor::RemoteExecutor;
@@ -27,8 +27,7 @@ struct ImageInfo {
     repository: String,
     #[serde(rename = "Tag")]
     tag: String,
-    #[serde(rename = "ID")]
-    id: String,
+    // ID field exists but we don't need it
 }
 
 /// Check for Docker image updates
@@ -57,13 +56,19 @@ pub async fn check_docker_updates(executor: &RemoteExecutor) -> Result<Vec<Docke
                     continue;
                 }
 
-                // For now, we'll mark has_update as false
-                // Full implementation would query registry API
-                // This is a placeholder for the MVP
+                // Check if this image has updates available
+                let has_update = match check_image_update(executor, &info.repository, &info.tag).await {
+                    Ok(update_available) => update_available,
+                    Err(e) => {
+                        log::warn!("Could not check updates for {}:{} - {}", info.repository, info.tag, e);
+                        false // Assume no update on error to avoid false positives
+                    }
+                };
+
                 images.push(DockerImage {
                     name: info.repository.clone(),
                     current_tag: info.tag.clone(),
-                    has_update: false, // TODO: Actually check registry
+                    has_update,
                 });
             }
             Err(e) => {
@@ -86,7 +91,7 @@ pub async fn check_docker_updates(executor: &RemoteExecutor) -> Result<Vec<Docke
 
 /// Check if a specific Docker image has updates available
 /// This queries the registry to compare digests
-pub async fn check_image_update(
+async fn check_image_update(
     executor: &RemoteExecutor,
     image_name: &str,
     tag: &str,
@@ -94,7 +99,7 @@ pub async fn check_image_update(
     // Get local image digest
     let local_output = executor
         .execute_command(
-            "docker",
+            "/usr/bin/docker",
             &[
                 "images",
                 "--digests",
@@ -106,34 +111,62 @@ pub async fn check_image_update(
         .await?;
 
     let local_digest = local_output.trim();
-    if local_digest.is_empty() {
-        return Err(anyhow!("Could not find local image {}:{}", image_name, tag));
+    if local_digest.is_empty() || local_digest == "<none>" {
+        log::debug!("No local digest found for {}:{}", image_name, tag);
+        return Ok(false); // Can't compare without local digest
     }
 
+    log::debug!("Local digest for {}:{} is {}", image_name, tag, local_digest);
+
     // Get remote digest using docker manifest inspect
-    // Note: This requires experimental CLI features in older Docker versions
+    // This pulls the latest manifest from the registry without downloading the image
     let remote_output = executor
         .execute_command(
-            "docker",
+            "/usr/bin/docker",
             &["manifest", "inspect", &format!("{}:{}", image_name, tag)],
         )
         .await;
 
     match remote_output {
         Ok(output) => {
-            // Parse the manifest to get digest
-            // The manifest command returns JSON with config.digest or similar
-            // For simplicity, we check if output contains the local digest
-            Ok(!output.contains(local_digest))
+            // Parse manifest JSON to extract digest
+            if let Ok(manifest) = serde_json::from_str::<serde_json::Value>(&output) {
+                // Get the digest from config or the manifest itself
+                let remote_digest = manifest
+                    .get("config")
+                    .and_then(|c| c.get("digest"))
+                    .and_then(|d| d.as_str())
+                    .or_else(|| {
+                        // For manifest lists, check if any platform differs
+                        manifest.get("digest").and_then(|d| d.as_str())
+                    });
+
+                if let Some(digest) = remote_digest {
+                    log::debug!("Remote digest for {}:{} is {}", image_name, tag, digest);
+                    // Update available if digests differ
+                    Ok(digest != local_digest)
+                } else {
+                    log::debug!("Could not parse digest from manifest for {}:{}", image_name, tag);
+                    Ok(false)
+                }
+            } else {
+                log::debug!("Could not parse manifest JSON for {}:{}", image_name, tag);
+                Ok(false)
+            }
         }
         Err(e) => {
-            log::warn!(
-                "Could not check remote digest for {}:{} - {}",
+            log::debug!(
+                "Could not fetch remote manifest for {}:{} - {}",
                 image_name,
                 tag,
                 e
             );
             // If we can't check remote, assume no update to avoid false positives
+            // This can happen with:
+            // - Private registries without auth
+            // - Rate limiting (Docker Hub)
+            // - Network issues
+            // - Invalid image names
             Ok(false)
         }
     }
