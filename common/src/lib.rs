@@ -287,12 +287,13 @@ async fn send_ntfy_with_topic(
         );
     }
 
-    // Build the request
+    // Build the request with markdown enabled for better formatting
     let mut json_body = serde_json::json!({
         "topic": topic,
         "title": title,
         "message": body,
         "priority": 4,
+        "markdown": true,
     });
 
     // Add actions if provided
@@ -300,7 +301,8 @@ async fn send_ntfy_with_topic(
         json_body["actions"] = serde_json::to_value(acts)?;
     }
 
-    let url = format!("{}/{}", ntfy_url.trim_end_matches('/'), topic);
+    // When using JSON, post to base URL (topic is in JSON body)
+    let url = ntfy_url.trim_end_matches('/').to_string();
     let mut request = client.post(&url).json(&json_body);
 
     // Add auth if configured
