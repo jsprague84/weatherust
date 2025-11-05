@@ -29,10 +29,11 @@ pub async fn update_os(executor: &RemoteExecutor, dry_run: bool) -> Result<Strin
                 &["apt-get", "update", "-qq"]
             ).await?;
 
-            // Upgrade packages (non-interactive)
+            // Full upgrade (handles new dependencies and removals)
+            // Uses full-upgrade instead of upgrade to match what updatemon detects
             let output = executor.execute_command(
                 "/usr/bin/sudo",
-                &["DEBIAN_FRONTEND=noninteractive", "apt-get", "upgrade", "-y"]
+                &["DEBIAN_FRONTEND=noninteractive", "apt-get", "full-upgrade", "-y"]
             ).await?;
 
             parse_apt_output(&output)
