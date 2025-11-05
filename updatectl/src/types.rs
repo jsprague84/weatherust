@@ -45,23 +45,34 @@ pub struct Server {
 }
 
 impl Server {
-    /// Create a local server instance
+    /// Create a local server instance with optional custom name and display
     pub fn local() -> Self {
+        let name = std::env::var("UPDATE_LOCAL_NAME")
+            .unwrap_or_else(|_| "localhost".to_string());
+
         Server {
-            name: "localhost".to_string(),
+            name,
             ssh_host: None,
         }
     }
 
     /// Parse server from string
     /// Format: "name:user@host" or "user@host" (name derived from host)
+    /// Special: "name:local" or "name:localhost" creates a localhost server with custom name
     pub fn parse(input: &str) -> Result<Self> {
         let parts: Vec<&str> = input.split(':').collect();
 
         match parts.len() {
             1 => {
-                // Just "user@host"
-                let ssh_host = parts[0].to_string();
+                let part = parts[0].trim();
+
+                // Check if this is a localhost indicator
+                if part.eq_ignore_ascii_case("local") || part.eq_ignore_ascii_case("localhost") {
+                    return Ok(Server::local());
+                }
+
+                // Otherwise it's "user@host"
+                let ssh_host = part.to_string();
                 let name = ssh_host.split('@').last().unwrap_or("unknown").to_string();
                 Ok(Server {
                     name,
@@ -69,10 +80,21 @@ impl Server {
                 })
             }
             2 => {
-                // "name:user@host"
+                let name = parts[0].trim();
+                let host = parts[1].trim();
+
+                // Check if host part is localhost indicator
+                if host.eq_ignore_ascii_case("local") || host.eq_ignore_ascii_case("localhost") {
+                    return Ok(Server {
+                        name: name.to_string(),
+                        ssh_host: None,
+                    });
+                }
+
+                // Normal "name:user@host"
                 Ok(Server {
-                    name: parts[0].to_string(),
-                    ssh_host: Some(parts[1].to_string()),
+                    name: name.to_string(),
+                    ssh_host: Some(host.to_string()),
                 })
             }
             _ => Err(anyhow!("Invalid server format: {}. Expected 'name:user@host' or 'user@host'", input)),
@@ -86,7 +108,13 @@ impl Server {
 
     /// Get display host string
     pub fn display_host(&self) -> String {
-        self.ssh_host.clone().unwrap_or_else(|| "local".to_string())
+        if self.is_local() {
+            // Check for custom localhost display
+            std::env::var("UPDATE_LOCAL_DISPLAY")
+                .unwrap_or_else(|_| "local".to_string())
+        } else {
+            self.ssh_host.clone().unwrap()
+        }
     }
 }
 

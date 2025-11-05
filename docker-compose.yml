@@ -107,9 +107,11 @@ services:
       - "ofelia.job-exec.dockermon.command=/app/dockermon --quiet"
 
       # Update monitor daily at 03:00 (checks OS packages and Docker images)
+      # NOTE: Add localhost to UPDATE_SERVERS (e.g., "docker-vm:local,...") to include it automatically
+      # Or use --local flag as shown below
       - "ofelia.job-exec.updatemon.schedule=0 0 3 * * *"
       - "ofelia.job-exec.updatemon.container=updatemon_runner"
-      - "ofelia.job-exec.updatemon.command=/app/updatemon --local --docker --quiet"
+      - "ofelia.job-exec.updatemon.command=/app/updatemon --docker --quiet"
 
       # Update controller - OPTIONAL automated updates (DISABLED by default)
       # CAUTION: Auto-updates can break services. Test thoroughly before enabling.

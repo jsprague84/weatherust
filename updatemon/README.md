@@ -163,7 +163,7 @@ This sends daily Gotify notifications about available updates.
 
 ### Server Format
 
-Two formats supported:
+Three formats supported:
 
 1. **With name:** `servername:user@host`
    - Example: `Cloud VM1:ubuntu@cloud-vm1.js-node.com`
@@ -171,6 +171,44 @@ Two formats supported:
 2. **Without name:** `user@host`
    - Example: `ubuntu@192.168.1.10`
    - Name derived from hostname
+
+3. **Localhost:** `name:local` or `name:localhost` **(NEW)**
+   - Example: `docker-vm:local`
+   - Creates a localhost entry with custom name
+   - Eliminates need for `--local` flag
+   - Automatically included in scheduled runs
+
+### Localhost Customization
+
+You can customize how localhost appears in reports using environment variables:
+
+```bash
+# In .env
+UPDATE_LOCAL_NAME=docker-vm           # Custom name instead of "localhost"
+UPDATE_LOCAL_DISPLAY=192.168.1.100    # IP/hostname instead of "local"
+```
+
+**Three ways to include localhost:**
+
+1. **Use --local flag:**
+   ```bash
+   updatemon --local --docker
+   ```
+   Shows: `🖥️  localhost (local)`
+
+2. **Add to UPDATE_SERVERS:**
+   ```bash
+   UPDATE_SERVERS=docker-vm:local,Cloud VM1:ubuntu@cloud
+   ```
+   Shows: `🖥️  docker-vm (local)`
+
+3. **Add to UPDATE_SERVERS with custom display:**
+   ```bash
+   UPDATE_SERVERS=docker-vm:local,Cloud VM1:ubuntu@cloud
+   UPDATE_LOCAL_NAME=docker-vm
+   UPDATE_LOCAL_DISPLAY=192.168.1.100
+   ```
+   Shows: `🖥️  docker-vm (192.168.1.100)`
 
 ### SSH Setup
 
