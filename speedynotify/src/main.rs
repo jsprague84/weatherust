@@ -1,5 +1,5 @@
 use clap::Parser;
-use common::{dotenv_init, http_client, send_gotify_speedynotify};
+use common::{dotenv_init, http_client, send_gotify_speedynotify, send_ntfy_speedynotify};
 use serde::Deserialize;
 use std::env;
 use tokio::process::Command;
@@ -336,8 +336,13 @@ async fn emit_and_notify(
     } else {
         "Speedtest: OK"
     };
+    // Send to Gotify (if configured)
     if let Err(e) = send_gotify_speedynotify(&client, title, &human).await {
         eprintln!("Gotify send error: {e}");
+    }
+    // Send to ntfy.sh (if configured)
+    if let Err(e) = send_ntfy_speedynotify(&client, title, &human, None).await {
+        eprintln!("ntfy send error: {e}");
     }
     Ok(())
 }

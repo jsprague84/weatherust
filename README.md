@@ -1,12 +1,12 @@
 **Weatherust**
 
-- Rust CLI that pulls current weather and 7-day outlook from OpenWeatherMap and optionally sends a Gotify notification.
+- Rust CLI that pulls current weather and 7-day outlook from OpenWeatherMap and optionally sends notifications via Gotify and/or ntfy.sh.
 - Supports ZIP or free-form location (e.g., "City,ST,US").
 - Designed to run non-interactively in Docker, scheduled by Ofelia (no host cron/systemd required).
 
 **Quick Start**
 
-- Copy env and fill keys: `cp .env.example .env` (set `OWM_API_KEY`, `GOTIFY_KEY`, `GOTIFY_URL`; optional `DEFAULT_ZIP`, `DEFAULT_UNITS`).
+- Copy env and fill keys: `cp .env.example .env` (set `OWM_API_KEY` and notification backend - see Notifications section below)
 - Start stack: `docker compose pull && docker compose up -d`
 - Verify scheduler: `docker compose logs -f ofelia`
 - Test once now: `docker compose run --rm weatherust` (uses `DEFAULT_*` from `.env`; add `--zip 52726 --units imperial` if not set)
@@ -15,7 +15,9 @@
 **Prerequisites**
 
 - OpenWeatherMap API key (`OWM_API_KEY`).
-- Gotify server app key (`GOTIFY_KEY`) and message endpoint URL (`GOTIFY_URL`).
+- Notification backend (choose one or both):
+  - **Gotify**: Server URL (`GOTIFY_URL`) and app keys (service-specific: `WEATHERUST_GOTIFY_KEY`, `UPDATEMON_GOTIFY_KEY`, etc.)
+  - **ntfy.sh**: Server URL (`NTFY_URL`, defaults to https://ntfy.sh) and topics (service-specific: `WEATHERUST_NTFY_TOPIC`, `UPDATEMON_NTFY_TOPIC`, etc.)
 - Toolchain: Rust 1.90.0 (pinned via `rust-toolchain.toml`).
 
 **Local Run**
@@ -87,19 +89,81 @@ Adjusting schedule:
 - Runtime image is distroless (cc variant) on Debian 12, running as non-root, which includes required libgcc runtime.
 - Toolchain pinned to Rust 1.90.0 for reproducible builds.
 
+**Notifications**
+
+All services support two notification backends: **Gotify** and **ntfy.sh**. You can use one or both simultaneously.
+
+**Gotify Configuration**
+
+Gotify is a self-hosted notification server. Each service checks for its own service-specific key:
+
+```bash
+# Gotify server URL (shared by all services)
+GOTIFY_URL=https://gotify.example.com/message
+
+# Service-specific Gotify app tokens
+WEATHERUST_GOTIFY_KEY=your_weatherust_token
+UPDATEMON_GOTIFY_KEY=your_updatemon_token
+UPDATECTL_GOTIFY_KEY=your_updatectl_token
+DOCKERMON_GOTIFY_KEY=your_dockermon_token
+SPEEDY_GOTIFY_KEY=your_speedynotify_token
+```
+
+Setup options:
+- **Simple**: Use the same token for all services (all notifications in one Gotify app)
+- **Organized**: Create separate Gotify apps and tokens for each service
+
+Optional:
+- `GOTIFY_KEY_FILE=/run/secrets/gotify_key` - Path to file containing token (fallback if service key not set)
+- `GOTIFY_DEBUG=true` - Enable debug logging (masks token, shows URL/message lengths)
+
+**ntfy.sh Configuration**
+
+ntfy.sh is an open-source notification service supporting action buttons. Each service publishes to its own topic:
+
+```bash
+# ntfy server URL (defaults to https://ntfy.sh if not set)
+NTFY_URL=https://ntfy.js-node.com
+
+# Optional: Authentication token for self-hosted ntfy servers
+NTFY_AUTH=your_ntfy_auth_token
+
+# Service-specific ntfy topics
+WEATHERUST_NTFY_TOPIC=weatherust
+UPDATEMON_NTFY_TOPIC=updates
+UPDATECTL_NTFY_TOPIC=update-actions
+DOCKERMON_NTFY_TOPIC=docker
+SPEEDY_NTFY_TOPIC=speedtest
+```
+
+Setup options:
+- **Simple**: Use the same topic for all services (all notifications in one feed)
+- **Organized**: Use different topics per service for separate notification feeds
+
+Optional:
+- `NTFY_DEBUG=true` - Enable debug logging (masks token, shows URL/topic/message lengths)
+
+**Using Both Backends**
+
+Services will send to both Gotify and ntfy if both are configured. Errors in one backend don't affect the other. If a service-specific key/topic is not set, that backend is silently skipped for that service.
+
+Example (dual configuration in `.env`):
+```bash
+# Both backends active
+GOTIFY_URL=https://gotify.example.com/message
+WEATHERUST_GOTIFY_KEY=gotify_token_here
+NTFY_URL=https://ntfy.js-node.com
+WEATHERUST_NTFY_TOPIC=weather-alerts
+```
+
 **Security/Secrets**
 
-- `.env` is gitignored. Do not commit real API tokens.
+- `.env` is gitignored. Do not commit real API tokens or ntfy auth tokens.
 - Rotate tokens if they were ever exposed.
-- Explicit Gotify app tokens per tool (recommended):
-  - `GOTIFY_URL` points to your server (e.g., `https://gotify.example.com/message`).
-  - `GOTIFY_KEY` → weatherust app token.
-  - `SPEEDY_GOTIFY_KEY` → speedynotify app token (the binary sets `GOTIFY_KEY` internally).
-  - `DOCKERMON_GOTIFY_KEY` → dockermon app token (the binary sets `GOTIFY_KEY` internally).
-  - If you prefer a single app, set all three to the same value.
-  - Optional: `GOTIFY_KEY_FILE` path to a file containing only a token (fallback).
+- See the **Notifications** section above for detailed configuration of Gotify and ntfy.sh backends.
+- Each service checks for its own service-specific key/topic (e.g., `WEATHERUST_GOTIFY_KEY`, `UPDATEMON_NTFY_TOPIC`).
 
-Example (Docker secrets-style mounting):
+Example (Docker secrets-style mounting for Gotify):
 - Create a file with only the key, e.g., `/opt/secrets/gotify_key`.
 - Mount it into the job container and set `GOTIFY_KEY_FILE` via Ofelia labels:
   - `ofelia.job-run.weatherust.volume=/opt/secrets/gotify_key:/run/secrets/gotify_key:ro`
@@ -130,9 +194,9 @@ Environment defaults:
 
 **Additional Tools (Workspace)**
 
-This repo is now a Rust workspace with a shared helper crate. A second binary, `speedynotify`, runs the Ookla Speedtest CLI and sends a Gotify summary.
+This repo is now a Rust workspace with a shared helper crate. A second binary, `speedynotify`, runs the Ookla Speedtest CLI and sends notifications via Gotify and/or ntfy.sh.
 
-Added: `dockermon` — checks Docker containers for health issues and high CPU/MEM and sends a Gotify summary. Designed for Ofelia to run every 5 minutes. It uses Ofelia's `env-file` label for reliable environment passing.
+Added: `dockermon` — checks Docker containers for health issues and high CPU/MEM and sends notifications via Gotify and/or ntfy.sh. Designed for Ofelia to run every 5 minutes. It uses Ofelia's `env-file` label for reliable environment passing.
 
 - Enable in compose:
   - Image: `ghcr.io/jsprague84/speedynotify:latest` (publish separately).
@@ -165,10 +229,11 @@ Publish images (CI):
 - Env:
   - `HEALTH_NOTIFY_ALWAYS` (default `false`) — notify even when all OK.
   - `CPU_WARN_PCT` (default `85`) — CPU percentage threshold.
-- `MEM_WARN_PCT` (default `90`) — memory percentage threshold.
-- `DOCKERMON_GOTIFY_KEY` (optional) — tool-specific token; falls back to `GOTIFY_KEY`/`GOTIFY_KEY_FILE`.
-- `GOTIFY_DEBUG` (optional) — set to `true`/`1` to print debug info in logs (URL, token source).
-- `DOCKERMON_IGNORE` (optional) — comma-separated list of container names/IDs/service names to skip (case-insensitive).
+  - `MEM_WARN_PCT` (default `90`) — memory percentage threshold.
+  - `DOCKERMON_GOTIFY_KEY` (optional) — Gotify token for this service.
+  - `DOCKERMON_NTFY_TOPIC` (optional) — ntfy.sh topic for this service.
+  - `GOTIFY_DEBUG` / `NTFY_DEBUG` (optional) — set to `true`/`1` to print debug info in logs.
+  - `DOCKERMON_IGNORE` (optional) — comma-separated list of container names/IDs/service names to skip (case-insensitive).
 - Compose integration:
   - Service mounts the Docker socket read-only.
 - Ofelia mounts the host `.env` inside the container at `/ofelia/.env`, and the job-run labels reference the host path (`env-file=${ENV_FILE_HOST_PATH}`) plus explicit `env=` entries so Docker loads the same values when starting one-off containers.
@@ -187,7 +252,7 @@ Two companion tools for managing updates across your infrastructure:
 **updatemon** - Multi-server update monitoring (read-only)
 - Checks OS packages (apt/dnf/pacman) and Docker images for available updates
 - Parallel execution across multiple servers via SSH
-- Gotify notifications with detailed update summaries
+- Notifications via Gotify and/or ntfy.sh with detailed update summaries
 - Runs daily (3:00 AM) to keep you informed
 - Safe for automation - never modifies anything
 - [Full documentation](updatemon/README.md)
@@ -210,9 +275,11 @@ UPDATE_SERVERS=Office-HP-WS:jsprague@192.168.1.189,Cloud VM1:ubuntu@cloud-vm1.js
 # SSH key for passwordless authentication
 UPDATE_SSH_KEY=/home/ubuntu/.ssh/id_ed25519
 
-# Gotify tokens (separate for each tool)
+# Notification backends (choose Gotify, ntfy.sh, or both)
 UPDATEMON_GOTIFY_KEY=your_updatemon_token
+UPDATEMON_NTFY_TOPIC=updates
 UPDATECTL_GOTIFY_KEY=your_updatectl_token
+UPDATECTL_NTFY_TOPIC=update-actions
 ```
 
 Quick start:

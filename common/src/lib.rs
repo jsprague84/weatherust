@@ -1,5 +1,6 @@
 use dotenvy::dotenv;
 use reqwest::Client;
+use serde::{Deserialize, Serialize};
 use std::env;
 
 pub fn dotenv_init() {
@@ -135,6 +136,179 @@ async fn send_gotify_with_key(
             "message": body,
             "priority": 5
         }))
+        .send()
+        .await?
+        .error_for_status()?;
+
+    Ok(())
+}
+
+// ============================================================================
+// ntfy.sh Support
+// ============================================================================
+
+/// ntfy.sh action button configuration
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct NtfyAction {
+    pub action: String,      // "view", "http", "broadcast"
+    pub label: String,       // Button text
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub url: Option<String>, // URL for http/view actions
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub method: Option<String>, // HTTP method (GET, POST, etc.)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub headers: Option<serde_json::Value>, // Custom headers
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub body: Option<String>, // Request body for POST
+}
+
+impl NtfyAction {
+    /// Create a simple view URL action button
+    pub fn view(label: &str, url: &str) -> Self {
+        NtfyAction {
+            action: "view".to_string(),
+            label: label.to_string(),
+            url: Some(url.to_string()),
+            method: None,
+            headers: None,
+            body: None,
+        }
+    }
+
+    /// Create an HTTP POST action button
+    pub fn http_post(label: &str, url: &str) -> Self {
+        NtfyAction {
+            action: "http".to_string(),
+            label: label.to_string(),
+            url: Some(url.to_string()),
+            method: Some("POST".to_string()),
+            headers: None,
+            body: None,
+        }
+    }
+
+    /// Add custom headers to the action
+    pub fn with_headers(mut self, headers: serde_json::Value) -> Self {
+        self.headers = Some(headers);
+        self
+    }
+
+    /// Add body to the action
+    pub fn with_body(mut self, body: &str) -> Self {
+        self.body = Some(body.to_string());
+        self
+    }
+}
+
+// Service-specific ntfy functions
+pub async fn send_ntfy_weatherust(
+    client: &Client,
+    title: &str,
+    body: &str,
+    actions: Option<Vec<NtfyAction>>,
+) -> Result<(), Box<dyn std::error::Error>> {
+    send_ntfy_with_topic(client, title, body, "WEATHERUST_NTFY_TOPIC", actions).await
+}
+
+pub async fn send_ntfy_updatemon(
+    client: &Client,
+    title: &str,
+    body: &str,
+    actions: Option<Vec<NtfyAction>>,
+) -> Result<(), Box<dyn std::error::Error>> {
+    send_ntfy_with_topic(client, title, body, "UPDATEMON_NTFY_TOPIC", actions).await
+}
+
+pub async fn send_ntfy_dockermon(
+    client: &Client,
+    title: &str,
+    body: &str,
+    actions: Option<Vec<NtfyAction>>,
+) -> Result<(), Box<dyn std::error::Error>> {
+    send_ntfy_with_topic(client, title, body, "DOCKERMON_NTFY_TOPIC", actions).await
+}
+
+pub async fn send_ntfy_speedynotify(
+    client: &Client,
+    title: &str,
+    body: &str,
+    actions: Option<Vec<NtfyAction>>,
+) -> Result<(), Box<dyn std::error::Error>> {
+    send_ntfy_with_topic(client, title, body, "SPEEDY_NTFY_TOPIC", actions).await
+}
+
+pub async fn send_ntfy_updatectl(
+    client: &Client,
+    title: &str,
+    body: &str,
+    actions: Option<Vec<NtfyAction>>,
+) -> Result<(), Box<dyn std::error::Error>> {
+    send_ntfy_with_topic(client, title, body, "UPDATECTL_NTFY_TOPIC", actions).await
+}
+
+// Internal helper: send ntfy notification with optional actions
+async fn send_ntfy_with_topic(
+    client: &Client,
+    title: &str,
+    body: &str,
+    topic_var: &str,
+    actions: Option<Vec<NtfyAction>>,
+) -> Result<(), Box<dyn std::error::Error>> {
+    // Get ntfy server URL
+    let ntfy_url = env::var("NTFY_URL")
+        .unwrap_or_else(|_| "https://ntfy.sh".to_string());
+
+    // Get topic for this service
+    let topic = match env::var(topic_var) {
+        Ok(t) if !t.trim().is_empty() => t.trim().to_string(),
+        _ => {
+            // ntfy not configured for this service - skip silently
+            return Ok(());
+        }
+    };
+
+    // Get optional auth token
+    let auth_token = env::var("NTFY_AUTH").ok();
+
+    // Optional debug output
+    let debug = env::var("NTFY_DEBUG")
+        .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
+        .unwrap_or(false);
+
+    if debug {
+        eprintln!(
+            "[ntfy] url={}/{} topic_var={} bytes_title={} bytes_body={} actions={}",
+            ntfy_url,
+            topic,
+            topic_var,
+            title.len(),
+            body.len(),
+            actions.as_ref().map(|a| a.len()).unwrap_or(0)
+        );
+    }
+
+    // Build the request
+    let mut json_body = serde_json::json!({
+        "topic": topic,
+        "title": title,
+        "message": body,
+        "priority": 4,
+    });
+
+    // Add actions if provided
+    if let Some(acts) = actions {
+        json_body["actions"] = serde_json::to_value(acts)?;
+    }
+
+    let url = format!("{}/{}", ntfy_url.trim_end_matches('/'), topic);
+    let mut request = client.post(&url).json(&json_body);
+
+    // Add auth if configured
+    if let Some(token) = auth_token {
+        request = request.header("Authorization", format!("Bearer {}", token));
+    }
+
+    request
         .send()
         .await?
         .error_for_status()?;

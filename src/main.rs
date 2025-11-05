@@ -3,7 +3,7 @@ use std::io::{self, Write};
 
 use chrono::{FixedOffset, TimeZone};
 use clap::Parser;
-use common::{dotenv_init, send_gotify_weatherust};
+use common::{dotenv_init, send_gotify_weatherust, send_ntfy_weatherust};
 use reqwest::Client;
 use serde::Deserialize;
 
@@ -180,9 +180,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         println!("{}", human_output);
     }
 
-    // Send Gotify (if env vars are set)
+    // Send to Gotify (if configured)
     if let Err(e) = send_gotify_weatherust(&client, &summary, &human_output).await {
         eprintln!("Gotify send error: {e}");
+    }
+
+    // Send to ntfy.sh (if configured)
+    if let Err(e) = send_ntfy_weatherust(&client, &summary, &human_output, None).await {
+        eprintln!("ntfy send error: {e}");
     }
 
     Ok(())
