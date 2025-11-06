@@ -1,6 +1,7 @@
 use anyhow::Result;
 use clap::Parser;
 use common::{dotenv_init, http_client, send_gotify_updatemon, send_ntfy_updatemon, NtfyAction};
+use reqwest::Client;
 
 mod types;
 mod checkers;
@@ -125,52 +126,48 @@ async fn main() -> Result<()> {
         eprintln!("Gotify send error: {e}");
     }
 
-    // Send to ntfy.sh (if configured) with action buttons - shortened message
-    let actions = generate_action_buttons(&all_reports, &servers);
-    let short_details = format_short_summary(&all_reports, &servers);
-    if let Err(e) = send_ntfy_updatemon(&client, &summary, &short_details, Some(actions)).await {
-        eprintln!("ntfy send error: {e}");
-    }
+    // Send to ntfy.sh (if configured) with action buttons - one notification per server
+    send_ntfy_per_server(&client, &all_reports, &servers).await;
 
     Ok(())
 }
 
-/// Format a short summary for ntfy (to avoid message size limits)
-fn format_short_summary(reports: &[String], servers: &[Server]) -> String {
-    let mut lines = Vec::new();
-
+/// Send individual ntfy notifications per server (only for servers with updates)
+async fn send_ntfy_per_server(client: &Client, reports: &[String], servers: &[Server]) {
     for (report, server) in reports.iter().zip(servers.iter()) {
         let has_os_updates = report.contains("📦") && report.contains("OS:");
         let has_docker_updates = report.contains("🐳") && report.contains("Docker:");
 
-        if has_os_updates || has_docker_updates {
-            let mut status = Vec::new();
-            if has_os_updates {
-                status.push("OS updates");
-            }
-            if has_docker_updates {
-                status.push("Docker updates");
-            }
-            lines.push(format!("🖥️  {} - {}", server.name, status.join(" + ")));
+        // Only send notification if server has updates
+        if !has_os_updates && !has_docker_updates {
+            continue;
         }
-    }
 
-    if lines.is_empty() {
-        "All systems up to date".to_string()
-    } else {
-        format!("Updates available:\n{}\n\nClick buttons below to update.", lines.join("\n"))
+        // Generate title
+        let mut update_types = Vec::new();
+        if has_os_updates {
+            update_types.push("OS");
+        }
+        if has_docker_updates {
+            update_types.push("Docker");
+        }
+        let title = format!("{} - {} updates available", server.name, update_types.join(" + "));
+
+        // Use the full report as message (it's already concise per-server)
+        let message = report.clone();
+
+        // Generate action buttons for this specific server
+        let actions = generate_server_action_buttons(report, server);
+
+        // Send notification
+        if let Err(e) = send_ntfy_updatemon(client, &title, &message, Some(actions)).await {
+            eprintln!("ntfy send error for {}: {}", server.name, e);
+        }
     }
 }
 
-/// Generate action buttons for ntfy notification based on update status
-fn generate_action_buttons(reports: &[String], servers: &[Server]) -> Vec<NtfyAction> {
-    let has_updates = reports.iter().any(|r| r.contains("📦") || r.contains("🐳"));
-
-    if !has_updates {
-        // No updates available - no action buttons needed
-        return Vec::new();
-    }
-
+/// Generate action buttons for a single server's ntfy notification
+fn generate_server_action_buttons(report: &str, server: &Server) -> Vec<NtfyAction> {
     let webhook_url = std::env::var("UPDATECTL_WEBHOOK_URL")
         .unwrap_or_else(|_| "http://updatectl_webhook:8080".to_string());
     let webhook_secret = std::env::var("UPDATECTL_WEBHOOK_SECRET")
@@ -181,46 +178,37 @@ fn generate_action_buttons(reports: &[String], servers: &[Server]) -> Vec<NtfyAc
         return Vec::new();
     }
 
+    let has_os_updates = report.contains("📦") && report.contains("OS:");
+    let has_docker_updates = report.contains("🐳") && report.contains("Docker:");
+
     let mut actions = Vec::new();
+    let server_name_encoded = urlencoding::encode(&server.name);
+    let token_encoded = urlencoding::encode(&webhook_secret);
 
-    // Generate buttons for each server with updates
-    for (report, server) in reports.iter().zip(servers.iter()) {
-        let has_os_updates = report.contains("📦") && report.contains("OS:");
-        let has_docker_updates = report.contains("🐳") && report.contains("Docker:");
-
-        if !has_os_updates && !has_docker_updates {
-            continue;
-        }
-
-        let server_name_encoded = urlencoding::encode(&server.name);
-        let token_encoded = urlencoding::encode(&webhook_secret);
-
-        // Add OS update button if needed
-        if has_os_updates {
-            let url = format!(
-                "{}/webhook/update/os?server={}&token={}",
-                webhook_url, server_name_encoded, token_encoded
-            );
-            actions.push(
-                NtfyAction::http_post(&format!("Update OS: {}", server.name), &url)
-            );
-        }
-
-        // Add Docker update button if needed
-        if has_docker_updates {
-            let url = format!(
-                "{}/webhook/update/docker/all?server={}&token={}",
-                webhook_url, server_name_encoded, token_encoded
-            );
-            actions.push(
-                NtfyAction::http_post(&format!("Update Docker: {}", server.name), &url)
-            );
-        }
+    // Add OS update button if needed
+    if has_os_updates {
+        let url = format!(
+            "{}/webhook/update/os?server={}&token={}",
+            webhook_url, server_name_encoded, token_encoded
+        );
+        actions.push(
+            NtfyAction::http_post("Update OS", &url)
+        );
     }
 
-    // Limit to 3 buttons max (self-hosted ntfy typically allows 3, public ntfy.sh allows 4)
-    // Use 3 as the conservative default to ensure compatibility with all ntfy servers
-    actions.truncate(3);
+    // Add Docker update button if needed
+    if has_docker_updates {
+        let url = format!(
+            "{}/webhook/update/docker/all?server={}&token={}",
+            webhook_url, server_name_encoded, token_encoded
+        );
+        actions.push(
+            NtfyAction::http_post("Update Docker", &url)
+        );
+    }
+
+    // We have room for up to 3 buttons per server
+    // Could add a third button here for individual Docker image updates if needed
 
     actions
 }
