@@ -1,6 +1,6 @@
 use anyhow::Result;
 use clap::Parser;
-use common::{dotenv_init, http_client, send_gotify_updatemon, send_ntfy_updatemon};
+use common::{dotenv_init, http_client, send_gotify_updatemon, send_ntfy_updatemon, NtfyAction};
 
 mod types;
 mod checkers;
@@ -77,10 +77,11 @@ async fn main() -> Result<()> {
     // Check each server for updates (in parallel using tokio tasks)
     let mut tasks = Vec::new();
 
-    for server in servers {
+    for server in &servers {
         let ssh_key_clone = ssh_key.clone();
         let docker_check = args.docker;
         let quiet = args.quiet;
+        let server_clone = server.clone();
 
         if !quiet {
             println!("Checking {}...", server.name);
@@ -88,11 +89,11 @@ async fn main() -> Result<()> {
 
         // Spawn concurrent task for each server
         let task = tokio::spawn(async move {
-            match check_server(&server, docker_check, ssh_key_clone.as_deref()).await {
+            match check_server(&server_clone, docker_check, ssh_key_clone.as_deref()).await {
                 Ok(report) => report,
                 Err(e) => {
-                    eprintln!("Error checking {}: {}", server.name, e);
-                    format!("❌ {} - Error: {}", server.name, e)
+                    eprintln!("Error checking {}: {}", server_clone.name, e);
+                    format!("❌ {} - Error: {}", server_clone.name, e)
                 }
             }
         });
@@ -124,12 +125,74 @@ async fn main() -> Result<()> {
         eprintln!("Gotify send error: {e}");
     }
 
-    // Send to ntfy.sh (if configured)
-    if let Err(e) = send_ntfy_updatemon(&client, &summary, &details, None).await {
+    // Send to ntfy.sh (if configured) with action buttons
+    let actions = generate_action_buttons(&all_reports, &servers);
+    if let Err(e) = send_ntfy_updatemon(&client, &summary, &details, Some(actions)).await {
         eprintln!("ntfy send error: {e}");
     }
 
     Ok(())
+}
+
+/// Generate action buttons for ntfy notification based on update status
+fn generate_action_buttons(reports: &[String], servers: &[Server]) -> Vec<NtfyAction> {
+    let has_updates = reports.iter().any(|r| r.contains("📦") || r.contains("🐳"));
+
+    if !has_updates {
+        // No updates available - no action buttons needed
+        return Vec::new();
+    }
+
+    let webhook_url = std::env::var("UPDATECTL_WEBHOOK_URL")
+        .unwrap_or_else(|_| "http://updatectl_webhook:8080".to_string());
+    let webhook_secret = std::env::var("UPDATECTL_WEBHOOK_SECRET")
+        .unwrap_or_default();
+
+    if webhook_secret.is_empty() {
+        // No webhook secret configured - can't generate secure buttons
+        return Vec::new();
+    }
+
+    let mut actions = Vec::new();
+
+    // Generate buttons for each server with updates
+    for (report, server) in reports.iter().zip(servers.iter()) {
+        let has_os_updates = report.contains("📦") && report.contains("OS:");
+        let has_docker_updates = report.contains("🐳") && report.contains("Docker:");
+
+        if !has_os_updates && !has_docker_updates {
+            continue;
+        }
+
+        let server_name_encoded = urlencoding::encode(&server.name);
+
+        // Add OS update button if needed
+        if has_os_updates {
+            let url = format!(
+                "{}/webhook/update/os?server={}&token={}",
+                webhook_url, server_name_encoded, webhook_secret
+            );
+            actions.push(
+                NtfyAction::http_post(&format!("Update OS: {}", server.name), &url)
+            );
+        }
+
+        // Add Docker update button if needed
+        if has_docker_updates {
+            let url = format!(
+                "{}/webhook/update/docker/all?server={}&token={}",
+                webhook_url, server_name_encoded, webhook_secret
+            );
+            actions.push(
+                NtfyAction::http_post(&format!("Update Docker: {}", server.name), &url)
+            );
+        }
+    }
+
+    // Limit to 4 buttons max (ntfy limitation)
+    actions.truncate(4);
+
+    actions
 }
 
 async fn check_server(server: &Server, check_docker: bool, ssh_key: Option<&str>) -> Result<String> {

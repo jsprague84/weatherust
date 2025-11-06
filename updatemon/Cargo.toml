@@ -32,3 +32,6 @@ log = "0.4"
 
 # Regex for parsing output
 regex = "1"
+
+# URL encoding for webhook URLs
+urlencoding = "2"

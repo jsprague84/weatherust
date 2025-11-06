@@ -6,6 +6,7 @@ mod types;
 mod executor;
 mod updater;
 mod checkers;
+mod webhook;
 
 use types::Server;
 use updater::{update_os, update_docker};
@@ -69,6 +70,13 @@ enum Commands {
         #[command(subcommand)]
         what: ListCommands,
     },
+
+    /// Start webhook server for remote-triggered updates
+    Serve {
+        /// Port to listen on
+        #[arg(long, default_value = "8080")]
+        port: u16,
+    },
 }
 
 #[derive(Subcommand, Debug, Clone)]
@@ -102,6 +110,28 @@ async fn main() -> Result<()> {
                 return Ok(());
             }
         }
+    }
+
+    // Handle serve command (webhook server mode)
+    if let Commands::Serve { port } = &args.command {
+        let secret = std::env::var("UPDATECTL_WEBHOOK_SECRET")
+            .expect("UPDATECTL_WEBHOOK_SECRET must be set for webhook server");
+
+        if secret.len() < 32 {
+            eprintln!("Warning: UPDATECTL_WEBHOOK_SECRET should be at least 32 characters");
+        }
+
+        let ssh_key = args.ssh_key
+            .or_else(|| std::env::var("UPDATE_SSH_KEY").ok());
+
+        println!("Starting webhook server...");
+        println!("Configured servers: {}", server_registry.len());
+        for (name, server) in &server_registry {
+            println!("  {} -> {}", name, server.display_host());
+        }
+        println!();
+
+        return webhook::serve_webhooks(*port, secret, server_registry, ssh_key).await;
     }
 
     // Parse server list from args or env
@@ -158,6 +188,10 @@ async fn main() -> Result<()> {
             Commands::List { .. } => {
                 // Already handled early - this shouldn't be reached
                 unreachable!("List commands should be handled before confirmation prompt")
+            }
+            Commands::Serve { .. } => {
+                // Already handled early - this shouldn't be reached
+                unreachable!("Serve command should be handled before confirmation prompt")
             }
         }
         println!();
@@ -269,6 +303,10 @@ async fn execute_update(
         Commands::List { .. } => {
             // Already handled early - this shouldn't be reached
             unreachable!("List commands should be handled before server execution")
+        }
+        Commands::Serve { .. } => {
+            // Already handled early - this shouldn't be reached
+            unreachable!("Serve command should be handled before server execution")
         }
     }
 
