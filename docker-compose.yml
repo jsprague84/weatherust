@@ -92,8 +92,7 @@ services:
     command: ["serve", "--port", "8080"]
     restart: unless-stopped
     networks:
-      - default
-      - proxy
+      proxy:
     healthcheck:
       test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost:8080/health"]
       interval: 30s
@@ -102,9 +101,14 @@ services:
       start_period: 10s
     labels:
       - "traefik.enable=true"
+      - "traefik.http.routers.updatectl-webhook.entrypoints=http"
       - "traefik.http.routers.updatectl-webhook.rule=Host(`${UPDATECTL_WEBHOOK_DOMAIN:-webhook.localhost}`)"
-      - "traefik.http.routers.updatectl-webhook.entrypoints=websecure"
-      - "traefik.http.routers.updatectl-webhook.tls.certresolver=letsencrypt"
+      - "traefik.http.middlewares.updatectl-webhook-https-redirect.redirectscheme.scheme=https"
+      - "traefik.http.routers.updatectl-webhook.middlewares=updatectl-webhook-https-redirect"
+      - "traefik.http.routers.updatectl-webhook-secure.entrypoints=https"
+      - "traefik.http.routers.updatectl-webhook-secure.rule=Host(`${UPDATECTL_WEBHOOK_DOMAIN:-webhook.localhost}`)"
+      - "traefik.http.routers.updatectl-webhook-secure.tls=true"
+      - "traefik.http.routers.updatectl-webhook-secure.service=updatectl-webhook"
       - "traefik.http.services.updatectl-webhook.loadbalancer.server.port=8080"
       - "traefik.docker.network=proxy"
 
