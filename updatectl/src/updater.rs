@@ -214,19 +214,38 @@ fn get_restart_policy() -> String {
 
 /// Get container exclusion list for a specific server
 fn get_restart_exclusions(server_name: &str) -> Vec<String> {
-    // Try server-specific exclusions first
-    let server_key = format!("UPDATECTL_RESTART_EXCLUDE_{}",
-        server_name.replace('-', "_").replace(' ', "_").to_uppercase()
-    );
+    let mut excluded = Vec::new();
 
-    if let Ok(excludes) = std::env::var(&server_key) {
-        return excludes.split(',')
+    // 1. Add default exclusions (applies to all servers)
+    if let Ok(defaults) = std::env::var("UPDATECTL_RESTART_EXCLUDE_DEFAULT") {
+        let default_list: Vec<String> = defaults.split(',')
             .map(|s| s.trim().to_string())
             .filter(|s| !s.is_empty())
             .collect();
+
+        log::debug!("Default exclusions: {:?}", default_list);
+        excluded.extend(default_list);
     }
 
-    Vec::new()
+    // 2. Add server-specific exclusions from UPDATECTL_RESTART_EXCLUDE
+    // Format: "server1:container1,server1:container2,server2:container3"
+    if let Ok(specific) = std::env::var("UPDATECTL_RESTART_EXCLUDE") {
+        for pair in specific.split(',') {
+            let pair = pair.trim();
+            if let Some((server, container)) = pair.split_once(':') {
+                let server = server.trim();
+                let container = container.trim();
+
+                // Check if this exclusion applies to current server
+                if server.eq_ignore_ascii_case(server_name) {
+                    log::debug!("Server-specific exclusion for {}: {}", server_name, container);
+                    excluded.push(container.to_string());
+                }
+            }
+        }
+    }
+
+    excluded
 }
 
 /// Check if a container should be restarted based on policy and exclusions
