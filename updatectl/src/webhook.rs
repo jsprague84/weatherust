@@ -6,6 +6,8 @@ use axum::{
     routing::post,
     Router,
 };
+use common::{send_gotify_updatectl, send_ntfy_updatectl};
+use reqwest::Client;
 use serde::Deserialize;
 use std::sync::Arc;
 use std::collections::HashMap;
@@ -20,6 +22,7 @@ pub struct WebhookState {
     pub secret: String,
     pub servers: HashMap<String, Server>,
     pub ssh_key: Option<String>,
+    pub client: Client,
 }
 
 #[derive(Debug, Deserialize)]
@@ -37,10 +40,12 @@ pub async fn serve_webhooks(
     servers: HashMap<String, Server>,
     ssh_key: Option<String>,
 ) -> Result<()> {
+    let client = Client::new();
     let state = Arc::new(WebhookState {
         secret,
         servers,
         ssh_key,
+        client,
     });
 
     let app = Router::new()
@@ -92,10 +97,31 @@ async fn handle_os_update(
 
     // Execute update in background
     let ssh_key = state.ssh_key.clone();
+    let client = state.client.clone();
     tokio::spawn(async move {
-        match execute_os_update(server, ssh_key.as_deref()).await {
-            Ok(msg) => log::info!("OS update completed: {}", msg),
-            Err(e) => log::error!("OS update failed: {}", e),
+        let (title, message) = match execute_os_update(&server, ssh_key.as_deref()).await {
+            Ok(msg) => {
+                log::info!("OS update completed: {}", msg);
+                (
+                    format!("{} - OS update complete", server.name),
+                    format!("✅ {}", msg)
+                )
+            }
+            Err(e) => {
+                log::error!("OS update failed: {}", e);
+                (
+                    format!("{} - OS update failed", server.name),
+                    format!("❌ Error: {}", e)
+                )
+            }
+        };
+
+        // Send notification (both Gotify and ntfy if configured)
+        if let Err(e) = send_gotify_updatectl(&client, &title, &message).await {
+            log::warn!("Failed to send Gotify notification: {}", e);
+        }
+        if let Err(e) = send_ntfy_updatectl(&client, &title, &message, None).await {
+            log::warn!("Failed to send ntfy notification: {}", e);
         }
     });
 
@@ -122,10 +148,31 @@ async fn handle_docker_all_update(
     log::info!("Webhook triggered: Docker all update for {}", server.name);
 
     let ssh_key = state.ssh_key.clone();
+    let client = state.client.clone();
     tokio::spawn(async move {
-        match execute_docker_update(server, true, None, ssh_key.as_deref()).await {
-            Ok(msg) => log::info!("Docker update completed: {}", msg),
-            Err(e) => log::error!("Docker update failed: {}", e),
+        let (title, message) = match execute_docker_update(&server, true, None, ssh_key.as_deref()).await {
+            Ok(msg) => {
+                log::info!("Docker update completed: {}", msg);
+                (
+                    format!("{} - Docker update complete", server.name),
+                    format!("✅ {}", msg)
+                )
+            }
+            Err(e) => {
+                log::error!("Docker update failed: {}", e);
+                (
+                    format!("{} - Docker update failed", server.name),
+                    format!("❌ Error: {}", e)
+                )
+            }
+        };
+
+        // Send notification (both Gotify and ntfy if configured)
+        if let Err(e) = send_gotify_updatectl(&client, &title, &message).await {
+            log::warn!("Failed to send Gotify notification: {}", e);
+        }
+        if let Err(e) = send_ntfy_updatectl(&client, &title, &message, None).await {
+            log::warn!("Failed to send ntfy notification: {}", e);
         }
     });
 
@@ -159,30 +206,51 @@ async fn handle_docker_image_update(
     log::info!("Webhook triggered: Docker image {} update for {}", image, server.name);
 
     let ssh_key = state.ssh_key.clone();
+    let client = state.client.clone();
     let image_clone = image.clone();
     tokio::spawn(async move {
-        match execute_docker_update(server, false, Some(&image_clone), ssh_key.as_deref()).await {
-            Ok(msg) => log::info!("Docker image update completed: {}", msg),
-            Err(e) => log::error!("Docker image update failed: {}", e),
+        let (title, message) = match execute_docker_update(&server, false, Some(&image_clone), ssh_key.as_deref()).await {
+            Ok(msg) => {
+                log::info!("Docker image update completed: {}", msg);
+                (
+                    format!("{} - Docker image update complete", server.name),
+                    format!("✅ {}", msg)
+                )
+            }
+            Err(e) => {
+                log::error!("Docker image update failed: {}", e);
+                (
+                    format!("{} - Docker image update failed", server.name),
+                    format!("❌ Error: {}", e)
+                )
+            }
+        };
+
+        // Send notification (both Gotify and ntfy if configured)
+        if let Err(e) = send_gotify_updatectl(&client, &title, &message).await {
+            log::warn!("Failed to send Gotify notification: {}", e);
+        }
+        if let Err(e) = send_ntfy_updatectl(&client, &title, &message, None).await {
+            log::warn!("Failed to send ntfy notification: {}", e);
         }
     });
 
     (StatusCode::ACCEPTED, format!("Docker image {} update started for {}", image, params.server))
 }
 
-async fn execute_os_update(server: Server, ssh_key: Option<&str>) -> Result<String> {
+async fn execute_os_update(server: &Server, ssh_key: Option<&str>) -> Result<String> {
     let executor = RemoteExecutor::new(server.clone(), ssh_key)?;
     let result = update_os(&executor, false).await?;
-    Ok(format!("🖥️  {} - OS: {}", server.name, result))
+    Ok(format!("OS: {}", result))
 }
 
 async fn execute_docker_update(
-    server: Server,
+    server: &Server,
     all: bool,
     images: Option<&str>,
     ssh_key: Option<&str>,
 ) -> Result<String> {
     let executor = RemoteExecutor::new(server.clone(), ssh_key)?;
     let result = update_docker(&executor, all, images, false).await?;
-    Ok(format!("🖥️  {} - Docker: {}", server.name, result))
+    Ok(format!("Docker: {}", result))
 }

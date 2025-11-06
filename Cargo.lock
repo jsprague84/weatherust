@@ -2175,6 +2175,7 @@ dependencies = [
  "common",
  "env_logger",
  "log",
+ "reqwest",
  "serde",
  "serde_json",
  "ssh2",

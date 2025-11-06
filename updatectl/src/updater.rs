@@ -87,15 +87,42 @@ pub async fn update_docker(
         return Ok(format!("{} images would be updated", image_list.len()));
     }
 
-    // Pull each image
+    // Pull each image and restart containers using them
     let mut updated = 0;
     let mut failed = 0;
+    let mut restarted = 0;
+    let mut restart_failed = 0;
 
     for image in &image_list {
+        // Pull the image
         match executor.execute_command("/usr/bin/docker", &["pull", image]).await {
             Ok(_) => {
                 log::info!("Updated image: {}", image);
                 updated += 1;
+
+                // Find containers using this image and restart them
+                match get_containers_using_image(executor, image).await {
+                    Ok(containers) => {
+                        if !containers.is_empty() {
+                            log::info!("Found {} containers using {}: {}", containers.len(), image, containers.join(", "));
+                            for container in &containers {
+                                match executor.execute_command("/usr/bin/docker", &["restart", container]).await {
+                                    Ok(_) => {
+                                        log::info!("Restarted container: {}", container);
+                                        restarted += 1;
+                                    }
+                                    Err(e) => {
+                                        log::warn!("Failed to restart container {}: {}", container, e);
+                                        restart_failed += 1;
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    Err(e) => {
+                        log::warn!("Failed to find containers using {}: {}", image, e);
+                    }
+                }
             }
             Err(e) => {
                 log::warn!("Failed to update {}: {}", image, e);
@@ -104,11 +131,19 @@ pub async fn update_docker(
         }
     }
 
+    // Build result message
+    let mut parts = vec![format!("Updated {} images", updated)];
     if failed > 0 {
-        Ok(format!("Updated {} images, {} failed", updated, failed))
-    } else {
-        Ok(format!("Updated {} images", updated))
+        parts.push(format!("{} failed", failed));
     }
+    if restarted > 0 {
+        parts.push(format!("restarted {} containers", restarted));
+    }
+    if restart_failed > 0 {
+        parts.push(format!("{} restart failures", restart_failed));
+    }
+
+    Ok(parts.join(", "))
 }
 
 /// Get list of all Docker images on a server
@@ -125,6 +160,25 @@ async fn get_all_images(executor: &RemoteExecutor) -> Result<Vec<String>> {
         .collect();
 
     Ok(images)
+}
+
+/// Get list of containers using a specific image
+async fn get_containers_using_image(executor: &RemoteExecutor, image: &str) -> Result<Vec<String>> {
+    let output = executor.execute_command(
+        "/usr/bin/docker",
+        &["ps", "--format", "{{.Names}}:{{.Image}}", "--filter", &format!("ancestor={}", image)]
+    ).await?;
+
+    let containers: Vec<String> = output
+        .lines()
+        .filter_map(|line| {
+            // Format is "container_name:image"
+            line.split(':').next().map(|s| s.trim().to_string())
+        })
+        .filter(|name| !name.is_empty())
+        .collect();
+
+    Ok(containers)
 }
 
 /// Parse apt-get upgrade output to count updated packages
