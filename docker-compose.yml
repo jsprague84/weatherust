@@ -91,6 +91,9 @@ services:
     entrypoint: ["/app/updatectl"]
     command: ["serve", "--port", "8080"]
     restart: unless-stopped
+    networks:
+      - default
+      - proxy
     healthcheck:
       test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost:8080/health"]
       interval: 30s
@@ -103,6 +106,7 @@ services:
       - "traefik.http.routers.updatectl-webhook.entrypoints=websecure"
       - "traefik.http.routers.updatectl-webhook.tls.certresolver=letsencrypt"
       - "traefik.http.services.updatectl-webhook.loadbalancer.server.port=8080"
+      - "traefik.docker.network=proxy"
 
   ofelia:
     image: mcuadros/ofelia:latest
@@ -155,3 +159,7 @@ services:
       # - "ofelia.job-exec.updatectl-all.schedule=0 0 5 1 * *"
       # - "ofelia.job-exec.updatectl-all.container=updatectl_runner"
       # - "ofelia.job-exec.updatectl-all.command=/app/updatectl all --yes --local --quiet"
+
+networks:
+  proxy:
+    external: true
