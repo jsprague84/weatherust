@@ -20,7 +20,7 @@ pub async fn analyze_dangling_images(docker: &Docker) -> Result<ImageStats> {
     stats.count = images.len();
 
     for image in images {
-        let size = image.size.unwrap_or(0) as u64;
+        let size = image.size.max(0) as u64;
         stats.total_size_bytes += size;
 
         stats.items.push(ImageInfo {
@@ -42,7 +42,7 @@ pub async fn analyze_unused_images(docker: &Docker) -> Result<ImageStats> {
 
     // Get all containers (including stopped)
     let containers = docker
-        .list_containers(Some(bollard::container::ListContainersOptions {
+        .list_containers(Some(bollard::container::ListContainersOptions::<String> {
             all: true,
             ..Default::default()
         }))
@@ -72,7 +72,7 @@ pub async fn analyze_unused_images(docker: &Docker) -> Result<ImageStats> {
 
     for image in all_images {
         // Skip dangling images (they're in the other category)
-        let repo_tags = image.repo_tags.unwrap_or_default();
+        let repo_tags = &image.repo_tags;
         if repo_tags.is_empty() || repo_tags.iter().any(|t| t.contains("<none>")) {
             continue;
         }
@@ -92,7 +92,7 @@ pub async fn analyze_unused_images(docker: &Docker) -> Result<ImageStats> {
             continue; // Too recent, skip
         }
 
-        let size = image.size.unwrap_or(0) as u64;
+        let size = image.size.max(0) as u64;
         stats.total_size_bytes += size;
         stats.count += 1;
 
@@ -127,7 +127,7 @@ pub async fn prune_dangling_images(docker: &Docker) -> Result<PruneStats> {
 
     let result = docker.prune_images(options).await?;
 
-    let space_reclaimed = result.space_reclaimed.unwrap_or(0);
+    let space_reclaimed = result.space_reclaimed.unwrap_or(0).max(0) as u64;
     let count = result.images_deleted.map(|v| v.len()).unwrap_or(0);
 
     Ok(PruneStats {
@@ -141,7 +141,7 @@ pub async fn prune_unused_images(docker: &Docker) -> Result<PruneStats> {
     // Prune all unused images (not just dangling)
     let result = docker.prune_images(None::<PruneImagesOptions<String>>).await?;
 
-    let space_reclaimed = result.space_reclaimed.unwrap_or(0);
+    let space_reclaimed = result.space_reclaimed.unwrap_or(0).max(0) as u64;
     let count = result.images_deleted.map(|v| v.len()).unwrap_or(0);
 
     Ok(PruneStats {

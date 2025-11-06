@@ -14,6 +14,9 @@ log = "0.4"
 # SSH execution (will copy from updatemon)
 ssh2 = "0.9"
 
+# Docker API for cleanup operations
+bollard = "0.16"
+
 # Webhook server
 axum = "0.7"
 tower = "0.4"

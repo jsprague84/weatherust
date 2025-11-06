@@ -33,6 +33,11 @@ pub struct WebhookQuery {
     image: Option<String>,
 }
 
+#[derive(Debug, Deserialize)]
+pub struct CleanupQuery {
+    token: String,
+}
+
 /// Start the webhook server
 pub async fn serve_webhooks(
     port: u16,
@@ -52,6 +57,8 @@ pub async fn serve_webhooks(
         .route("/webhook/update/os", post(handle_os_update))
         .route("/webhook/update/docker/all", post(handle_docker_all_update))
         .route("/webhook/update/docker/image", post(handle_docker_image_update))
+        .route("/webhook/cleanup/safe", post(handle_cleanup_safe))
+        .route("/webhook/cleanup/images/prune-unused", post(handle_cleanup_prune_unused))
         .route("/health", axum::routing::get(health_check))
         .layer(TraceLayer::new_for_http())
         .with_state(state);
@@ -62,6 +69,8 @@ pub async fn serve_webhooks(
     println!("  POST /webhook/update/os?server=<name>&token=<secret>");
     println!("  POST /webhook/update/docker/all?server=<name>&token=<secret>");
     println!("  POST /webhook/update/docker/image?server=<name>&image=<image>&token=<secret>");
+    println!("  POST /webhook/cleanup/safe?token=<secret>");
+    println!("  POST /webhook/cleanup/images/prune-unused?token=<secret>");
     println!("  GET  /health");
 
     let listener = tokio::net::TcpListener::bind(addr).await?;
@@ -238,6 +247,78 @@ async fn handle_docker_image_update(
     (StatusCode::ACCEPTED, format!("Docker image {} update started for {}", image, params.server))
 }
 
+async fn handle_cleanup_safe(
+    State(state): State<Arc<WebhookState>>,
+    Query(params): Query<CleanupQuery>,
+) -> impl IntoResponse {
+    if params.token != state.secret {
+        log::warn!("Invalid webhook token for safe cleanup");
+        return (StatusCode::UNAUTHORIZED, "Invalid token".to_string());
+    }
+
+    log::info!("Webhook triggered: Safe cleanup (dangling images + unused networks)");
+
+    let client = state.client.clone();
+    tokio::spawn(async move {
+        let (title, message) = match execute_safe_cleanup().await {
+            Ok(msg) => {
+                log::info!("Safe cleanup completed: {}", msg);
+                ("Docker Cleanup: Safe cleanup complete".to_string(), format!("✅ {}", msg))
+            }
+            Err(e) => {
+                log::error!("Safe cleanup failed: {}", e);
+                ("Docker Cleanup: Safe cleanup failed".to_string(), format!("❌ Error: {}", e))
+            }
+        };
+
+        // Send notification (both Gotify and ntfy if configured)
+        if let Err(e) = send_gotify_updatectl(&client, &title, &message).await {
+            log::warn!("Failed to send Gotify notification: {}", e);
+        }
+        if let Err(e) = send_ntfy_updatectl(&client, &title, &message, None).await {
+            log::warn!("Failed to send ntfy notification: {}", e);
+        }
+    });
+
+    (StatusCode::ACCEPTED, "Safe cleanup started".to_string())
+}
+
+async fn handle_cleanup_prune_unused(
+    State(state): State<Arc<WebhookState>>,
+    Query(params): Query<CleanupQuery>,
+) -> impl IntoResponse {
+    if params.token != state.secret {
+        log::warn!("Invalid webhook token for unused image cleanup");
+        return (StatusCode::UNAUTHORIZED, "Invalid token".to_string());
+    }
+
+    log::info!("Webhook triggered: Prune unused images");
+
+    let client = state.client.clone();
+    tokio::spawn(async move {
+        let (title, message) = match execute_prune_unused_images().await {
+            Ok(msg) => {
+                log::info!("Unused image cleanup completed: {}", msg);
+                ("Docker Cleanup: Unused images pruned".to_string(), format!("✅ {}", msg))
+            }
+            Err(e) => {
+                log::error!("Unused image cleanup failed: {}", e);
+                ("Docker Cleanup: Unused image prune failed".to_string(), format!("❌ Error: {}", e))
+            }
+        };
+
+        // Send notification (both Gotify and ntfy if configured)
+        if let Err(e) = send_gotify_updatectl(&client, &title, &message).await {
+            log::warn!("Failed to send Gotify notification: {}", e);
+        }
+        if let Err(e) = send_ntfy_updatectl(&client, &title, &message, None).await {
+            log::warn!("Failed to send ntfy notification: {}", e);
+        }
+    });
+
+    (StatusCode::ACCEPTED, "Unused image cleanup started".to_string())
+}
+
 async fn execute_os_update(server: &Server, ssh_key: Option<&str>) -> Result<String> {
     let executor = RemoteExecutor::new(server.clone(), ssh_key)?;
     let result = update_os(&executor, false).await?;
@@ -253,4 +334,62 @@ async fn execute_docker_update(
     let executor = RemoteExecutor::new(server.clone(), ssh_key)?;
     let result = update_docker(&executor, all, images, false).await?;
     Ok(format!("Docker: {}", result))
+}
+
+async fn execute_safe_cleanup() -> Result<String> {
+    use bollard::Docker;
+    use bollard::image::PruneImagesOptions;
+    use bollard::network::PruneNetworksOptions;
+    use std::collections::HashMap;
+
+    let docker = Docker::connect_with_unix_defaults()?;
+
+    let mut results = Vec::new();
+    let mut total_space_reclaimed: u64 = 0;
+
+    // Prune dangling images
+    let mut filters = HashMap::new();
+    filters.insert("dangling", vec!["true"]);
+    let image_prune_result = docker.prune_images(Some(PruneImagesOptions { filters })).await?;
+    let image_count = image_prune_result.images_deleted.as_ref().map(|v| v.len()).unwrap_or(0);
+    let image_space = image_prune_result.space_reclaimed.unwrap_or(0).max(0) as u64;
+    total_space_reclaimed += image_space;
+    results.push(format!("{} dangling images", image_count));
+
+    // Prune unused networks
+    let network_prune_result = docker.prune_networks(None::<PruneNetworksOptions<String>>).await?;
+    let network_count = network_prune_result.networks_deleted.as_ref().map(|v| v.len()).unwrap_or(0);
+    results.push(format!("{} unused networks", network_count));
+
+    let space_str = if total_space_reclaimed >= 1024 * 1024 * 1024 {
+        format!("{:.2}GB", total_space_reclaimed as f64 / (1024.0 * 1024.0 * 1024.0))
+    } else if total_space_reclaimed >= 1024 * 1024 {
+        format!("{}MB", total_space_reclaimed / (1024 * 1024))
+    } else {
+        format!("{}KB", total_space_reclaimed / 1024)
+    };
+
+    Ok(format!("Removed {} | Reclaimed {}", results.join(" + "), space_str))
+}
+
+async fn execute_prune_unused_images() -> Result<String> {
+    use bollard::Docker;
+    use bollard::image::PruneImagesOptions;
+
+    let docker = Docker::connect_with_unix_defaults()?;
+
+    // Prune all unused images (not just dangling)
+    let prune_result = docker.prune_images(None::<PruneImagesOptions<String>>).await?;
+    let count = prune_result.images_deleted.as_ref().map(|v| v.len()).unwrap_or(0);
+    let space = prune_result.space_reclaimed.unwrap_or(0).max(0) as u64;
+
+    let space_str = if space >= 1024 * 1024 * 1024 {
+        format!("{:.2}GB", space as f64 / (1024.0 * 1024.0 * 1024.0))
+    } else if space >= 1024 * 1024 {
+        format!("{}MB", space / (1024 * 1024))
+    } else {
+        format!("{}KB", space / 1024)
+    };
+
+    Ok(format!("Removed {} unused images | Reclaimed {}", count, space_str))
 }

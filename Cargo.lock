@@ -385,7 +385,9 @@ dependencies = [
 name = "dockermon"
 version = "0.1.0"
 dependencies = [
+ "anyhow",
  "bollard",
+ "chrono",
  "clap",
  "common",
  "futures-util",
@@ -2171,6 +2173,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "axum",
+ "bollard",
  "clap",
  "common",
  "env_logger",

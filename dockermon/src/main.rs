@@ -1,42 +1,92 @@
 use bollard::models::HealthStatusEnum;
-use clap::Parser;
-use common::{dotenv_init, http_client, send_gotify_dockermon, send_ntfy_dockermon};
+use clap::{Parser, Subcommand};
+use common::{dotenv_init, http_client, send_gotify_dockermon, send_ntfy_dockermon, NtfyAction};
 use futures_util::StreamExt;
 use std::collections::HashSet;
 use std::env;
 use tokio::time::{timeout, Duration};
 
+mod cleanup;
+
 #[derive(Parser, Debug)]
 #[command(name = "dockermon")]
-#[command(about = "Check Docker container health/usage and notify Gotify")]
-struct Args {
-    /// Suppress stdout; only send Gotify
-    #[arg(long, default_value_t = false)]
-    quiet: bool,
+#[command(about = "Docker monitoring and cleanup tool")]
+struct Cli {
+    #[command(subcommand)]
+    command: Commands,
+}
 
-    /// CPU warn threshold in percent (overrides env CPU_WARN_PCT)
-    #[arg(long)]
-    cpu_warn_pct: Option<f64>,
+#[derive(Subcommand, Debug)]
+enum Commands {
+    /// Check Docker container health and notify
+    Health {
+        /// Suppress stdout; only send notifications
+        #[arg(long, default_value_t = false)]
+        quiet: bool,
 
-    /// Memory warn threshold in percent (overrides env MEM_WARN_PCT)
-    #[arg(long)]
-    mem_warn_pct: Option<f64>,
+        /// CPU warn threshold in percent (overrides env CPU_WARN_PCT)
+        #[arg(long)]
+        cpu_warn_pct: Option<f64>,
 
-    /// Always notify, even when everything is OK (overrides env HEALTH_NOTIFY_ALWAYS)
-    #[arg(long, default_value_t = false)]
-    notify_always: bool,
+        /// Memory warn threshold in percent (overrides env MEM_WARN_PCT)
+        #[arg(long)]
+        mem_warn_pct: Option<f64>,
 
-    /// Ignore containers by name/id/service (comma-separated or repeated)
-    #[arg(long, value_name = "NAME", value_delimiter = ',')]
-    ignore: Vec<String>,
+        /// Always notify, even when everything is OK (overrides env HEALTH_NOTIFY_ALWAYS)
+        #[arg(long, default_value_t = false)]
+        notify_always: bool,
+
+        /// Ignore containers by name/id/service (comma-separated or repeated)
+        #[arg(long, value_name = "NAME", value_delimiter = ',')]
+        ignore: Vec<String>,
+    },
+    /// Analyze Docker resources and report cleanup opportunities
+    Cleanup {
+        /// Suppress stdout; only send notifications
+        #[arg(long, default_value_t = false)]
+        quiet: bool,
+
+        /// Execute safe cleanup (dangling images + unused networks)
+        #[arg(long, default_value_t = false)]
+        execute_safe: bool,
+
+        /// Execute unused image cleanup (requires explicit flag)
+        #[arg(long, default_value_t = false)]
+        prune_unused_images: bool,
+    },
 }
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     dotenv_init();
-    let args = Args::parse();
+    let cli = Cli::parse();
 
-    let ignore_set = build_ignore_set(&args.ignore);
+    match cli.command {
+        Commands::Health {
+            quiet,
+            cpu_warn_pct,
+            mem_warn_pct,
+            notify_always,
+            ignore,
+        } => {
+            run_health_check(quiet, cpu_warn_pct, mem_warn_pct, notify_always, ignore).await
+        }
+        Commands::Cleanup {
+            quiet,
+            execute_safe,
+            prune_unused_images,
+        } => run_cleanup(quiet, execute_safe, prune_unused_images).await,
+    }
+}
+
+async fn run_health_check(
+    quiet: bool,
+    cpu_warn_pct: Option<f64>,
+    mem_warn_pct: Option<f64>,
+    notify_always: bool,
+    ignore: Vec<String>,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let ignore_set = build_ignore_set(&ignore);
 
     // Allow a dockermon-specific Gotify token override
     if let Ok(tok) = std::env::var("DOCKERMON_GOTIFY_KEY") {
@@ -46,9 +96,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
 
     // Resolve thresholds and flags from env with CLI overrides
-    let cpu_warn = args.cpu_warn_pct.or_else(|| env_var_f64("CPU_WARN_PCT"));
-    let mem_warn = args.mem_warn_pct.or_else(|| env_var_f64("MEM_WARN_PCT"));
-    let notify_always = if args.notify_always {
+    let cpu_warn = cpu_warn_pct.or_else(|| env_var_f64("CPU_WARN_PCT"));
+    let mem_warn = mem_warn_pct.or_else(|| env_var_f64("MEM_WARN_PCT"));
+    let notify_always = if notify_always {
         true
     } else {
         env::var("HEALTH_NOTIFY_ALWAYS")
@@ -175,7 +225,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
 
     let body = lines.join("\n");
-    if !args.quiet {
+    if !quiet {
         println!("{}\n{}", title, body);
     }
 
@@ -189,6 +239,217 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         if let Err(e) = send_ntfy_dockermon(&client, title, &body, None).await {
             eprintln!("ntfy send error: {e}");
         }
+    }
+
+    Ok(())
+}
+
+async fn run_cleanup(
+    quiet: bool,
+    execute_safe: bool,
+    prune_unused_images: bool,
+) -> Result<(), Box<dyn std::error::Error>> {
+    // Allow a dockermon-specific Gotify token override
+    if let Ok(tok) = std::env::var("DOCKERMON_GOTIFY_KEY") {
+        if !tok.trim().is_empty() {
+            std::env::set_var("GOTIFY_KEY", tok);
+        }
+    }
+
+    // Connect to Docker via Unix socket
+    let docker = bollard::Docker::connect_with_unix_defaults()?;
+
+    // Analyze cleanup opportunities
+    let report = cleanup::analyze_cleanup(&docker).await?;
+
+    // Execute cleanup if requested
+    let mut execution_summary = Vec::new();
+
+    if execute_safe {
+        let result = cleanup::execute_safe_cleanup(&docker).await?;
+        execution_summary.push(format!(
+            "Safe cleanup: {} dangling images ({}) + {} unused networks removed",
+            result.dangling_images_removed,
+            cleanup::format_bytes(result.space_reclaimed_bytes),
+            result.networks_removed
+        ));
+    }
+
+    if prune_unused_images {
+        let result = cleanup::execute_unused_image_cleanup(&docker).await?;
+        execution_summary.push(format!(
+            "Unused images: {} removed ({})",
+            result.unused_images_removed,
+            cleanup::format_bytes(result.space_reclaimed_bytes)
+        ));
+    }
+
+    // Format report
+    let title = if execution_summary.is_empty() {
+        "Docker Cleanup: Analysis"
+    } else {
+        "Docker Cleanup: Complete"
+    };
+
+    let mut lines = Vec::new();
+    let cleanup_was_executed = !execution_summary.is_empty();
+
+    // Add execution summary if any cleanup was performed
+    if cleanup_was_executed {
+        lines.push("=== Cleanup Actions ===".to_string());
+        lines.extend(execution_summary);
+        lines.push("".to_string());
+    }
+
+    // Add analysis report
+    lines.push("=== Analysis Report ===".to_string());
+    lines.push(format!(
+        "Total reclaimable: {}",
+        cleanup::format_bytes(report.total_reclaimable_bytes)
+    ));
+    lines.push("".to_string());
+
+    // Dangling images
+    if report.dangling_images.count > 0 {
+        lines.push(format!(
+            "Dangling Images: {} ({})",
+            report.dangling_images.count,
+            cleanup::format_bytes(report.dangling_images.total_size_bytes)
+        ));
+        for item in report.dangling_images.items.iter().take(5) {
+            lines.push(format!("  • {} ({})", item.image_id, cleanup::format_bytes(item.size_bytes)));
+        }
+        lines.push("".to_string());
+    }
+
+    // Unused images
+    if report.unused_images.count > 0 {
+        lines.push(format!(
+            "Unused Images: {} ({})",
+            report.unused_images.count,
+            cleanup::format_bytes(report.unused_images.total_size_bytes)
+        ));
+        for item in report.unused_images.items.iter().take(5) {
+            lines.push(format!(
+                "  • {}:{} ({})",
+                item.repository,
+                item.tag,
+                cleanup::format_bytes(item.size_bytes)
+            ));
+        }
+        lines.push("".to_string());
+    }
+
+    // Unused networks
+    if report.unused_networks.count > 0 {
+        lines.push(format!("Unused Networks: {}", report.unused_networks.count));
+        for item in report.unused_networks.items.iter().take(5) {
+            lines.push(format!("  • {} ({})", item.name, item.driver));
+        }
+        lines.push("".to_string());
+    }
+
+    // Large logs
+    if report.large_logs.containers_over_threshold > 0 {
+        lines.push(format!(
+            "Large Logs: {} containers (total {})",
+            report.large_logs.containers_over_threshold,
+            cleanup::format_bytes(report.large_logs.total_size_bytes)
+        ));
+        for item in report.large_logs.items.iter().take(5) {
+            let rotation_status = if item.has_rotation { "rotated" } else { "NO ROTATION" };
+            lines.push(format!(
+                "  • {} ({}, {})",
+                item.container_name,
+                cleanup::format_bytes(item.log_size_bytes),
+                rotation_status
+            ));
+        }
+        lines.push("".to_string());
+    }
+
+    // Volumes (info only)
+    if report.volumes.count > 0 {
+        lines.push(format!(
+            "Volumes: {} (total {})",
+            report.volumes.count,
+            cleanup::format_bytes(report.volumes.total_size_bytes)
+        ));
+        for item in report.volumes.items.iter().take(5) {
+            let usage = if item.containers_using.is_empty() {
+                "UNUSED".to_string()
+            } else {
+                format!("used by {}", item.containers_using.join(", "))
+            };
+            lines.push(format!(
+                "  • {} ({}, {})",
+                item.name,
+                cleanup::format_bytes(item.size_bytes),
+                usage
+            ));
+        }
+        lines.push("".to_string());
+    }
+
+    let body = lines.join("\n");
+    if !quiet {
+        println!("{}\n{}", title, body);
+    }
+
+    // Prepare ntfy actions (only if no cleanup was executed)
+    let ntfy_actions = if !cleanup_was_executed && report.total_reclaimable_bytes > 0 {
+        // Get webhook base URL from env
+        let webhook_url = env::var("UPDATECTL_WEBHOOK_URL")
+            .unwrap_or_else(|_| "http://localhost:8080/webhook".to_string());
+        let webhook_secret = env::var("UPDATECTL_WEBHOOK_SECRET")
+            .unwrap_or_else(|_| "your_secret_token".to_string());
+
+        let mut actions = Vec::new();
+
+        // Add safe cleanup button if there are dangling images or unused networks
+        if report.dangling_images.count > 0 || report.unused_networks.count > 0 {
+            actions.push(
+                NtfyAction::http_post(
+                    "Safe Cleanup",
+                    &format!("{}/cleanup/safe", webhook_url)
+                )
+                .with_headers(serde_json::json!({
+                    "Authorization": format!("Bearer {}", webhook_secret)
+                }))
+            );
+        }
+
+        // Add unused images cleanup button if there are unused images (dangerous operation)
+        if report.unused_images.count > 0 {
+            actions.push(
+                NtfyAction::http_post(
+                    "Prune Unused Images",
+                    &format!("{}/cleanup/images/prune-unused", webhook_url)
+                )
+                .with_headers(serde_json::json!({
+                    "Authorization": format!("Bearer {}", webhook_secret)
+                }))
+            );
+        }
+
+        // Limit to 3 actions (ntfy.sh self-hosted limit)
+        actions.truncate(3);
+        Some(actions)
+    } else {
+        None
+    };
+
+    // Always notify for cleanup operations
+    let client = http_client();
+
+    // Send to Gotify (if configured) - full report
+    if let Err(e) = send_gotify_dockermon(&client, title, &body).await {
+        eprintln!("Gotify send error: {e}");
+    }
+
+    // Send to ntfy.sh (if configured) - with action buttons
+    if let Err(e) = send_ntfy_dockermon(&client, title, &body, ntfy_actions).await {
+        eprintln!("ntfy send error: {e}");
     }
 
     Ok(())

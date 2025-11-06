@@ -131,10 +131,22 @@ services:
       - "ofelia.job-exec.speedynotify.container=speedynotify_runner"
       - "ofelia.job-exec.speedynotify.command=/app/speedynotify --quiet --min-down ${SPEEDTEST_MIN_DOWN} --min-up ${SPEEDTEST_MIN_UP}"
 
-      # Docker monitor every 5 minutes (exec inside runner to inherit env_file)
-      - "ofelia.job-exec.dockermon.schedule=0 */5 * * * *"
-      - "ofelia.job-exec.dockermon.container=dockermon_runner"
-      - "ofelia.job-exec.dockermon.command=/app/dockermon --quiet"
+      # Docker health monitor every 5 minutes (exec inside runner to inherit env_file)
+      - "ofelia.job-exec.dockermon-health.schedule=0 */5 * * * *"
+      - "ofelia.job-exec.dockermon-health.container=dockermon_runner"
+      - "ofelia.job-exec.dockermon-health.command=/app/dockermon health --quiet"
+
+      # Docker cleanup analysis weekly (Sundays at 02:00)
+      - "ofelia.job-exec.dockermon-cleanup-report.schedule=0 0 2 * * 0"
+      - "ofelia.job-exec.dockermon-cleanup-report.container=dockermon_runner"
+      - "ofelia.job-exec.dockermon-cleanup-report.command=/app/dockermon cleanup --quiet"
+
+      # Docker safe auto-cleanup - OPTIONAL (DISABLED by default)
+      # CAUTION: Removes dangling images and unused networks automatically
+      # Uncomment to enable monthly safe cleanup (1st of month at 02:30)
+      # - "ofelia.job-exec.dockermon-cleanup-safe.schedule=0 30 2 1 * *"
+      # - "ofelia.job-exec.dockermon-cleanup-safe.container=dockermon_runner"
+      # - "ofelia.job-exec.dockermon-cleanup-safe.command=/app/dockermon cleanup --quiet --execute-safe"
 
       # Update monitor daily at 03:00 (checks OS packages and Docker images)
       # NOTE: Add localhost to UPDATE_SERVERS (e.g., "docker-vm:local,...") to include it automatically

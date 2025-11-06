@@ -13,7 +13,7 @@ pub async fn analyze_volumes(docker: &Docker) -> Result<VolumeStats> {
 
     // Get all containers to see which volumes are in use
     let containers = docker
-        .list_containers(Some(bollard::container::ListContainersOptions {
+        .list_containers(Some(bollard::container::ListContainersOptions::<String> {
             all: true,
             ..Default::default()
         }))

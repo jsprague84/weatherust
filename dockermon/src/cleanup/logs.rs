@@ -6,7 +6,7 @@ use std::path::Path;
 /// Analyze container log sizes
 pub async fn analyze_large_logs(docker: &Docker) -> Result<LogStats> {
     let containers = docker
-        .list_containers(Some(bollard::container::ListContainersOptions {
+        .list_containers(Some(bollard::container::ListContainersOptions::<String> {
             all: true,
             ..Default::default()
         }))

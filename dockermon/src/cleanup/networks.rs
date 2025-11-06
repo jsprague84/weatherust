@@ -2,7 +2,6 @@ use crate::cleanup::types::{NetworkInfo, NetworkStats};
 use anyhow::Result;
 use bollard::Docker;
 use bollard::network::{ListNetworksOptions, PruneNetworksOptions};
-use std::collections::HashMap;
 
 /// Analyze unused Docker networks
 pub async fn analyze_unused_networks(docker: &Docker) -> Result<NetworkStats> {
