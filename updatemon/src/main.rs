@@ -165,12 +165,13 @@ fn generate_action_buttons(reports: &[String], servers: &[Server]) -> Vec<NtfyAc
         }
 
         let server_name_encoded = urlencoding::encode(&server.name);
+        let token_encoded = urlencoding::encode(&webhook_secret);
 
         // Add OS update button if needed
         if has_os_updates {
             let url = format!(
                 "{}/webhook/update/os?server={}&token={}",
-                webhook_url, server_name_encoded, webhook_secret
+                webhook_url, server_name_encoded, token_encoded
             );
             actions.push(
                 NtfyAction::http_post(&format!("Update OS: {}", server.name), &url)
@@ -181,7 +182,7 @@ fn generate_action_buttons(reports: &[String], servers: &[Server]) -> Vec<NtfyAc
         if has_docker_updates {
             let url = format!(
                 "{}/webhook/update/docker/all?server={}&token={}",
-                webhook_url, server_name_encoded, webhook_secret
+                webhook_url, server_name_encoded, token_encoded
             );
             actions.push(
                 NtfyAction::http_post(&format!("Update Docker: {}", server.name), &url)
