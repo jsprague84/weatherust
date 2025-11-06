@@ -90,8 +90,6 @@ services:
       - ${HOME}/.ssh:/root/.ssh:ro
     entrypoint: ["/app/updatectl"]
     command: ["serve", "--port", "8080"]
-    ports:
-      - "127.0.0.1:8080:8080"  # Only expose on localhost for security
     restart: unless-stopped
     healthcheck:
       test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost:8080/health"]
@@ -99,6 +97,12 @@ services:
       timeout: 3s
       retries: 3
       start_period: 10s
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.updatectl-webhook.rule=Host(`${UPDATECTL_WEBHOOK_DOMAIN:-webhook.localhost}`)"
+      - "traefik.http.routers.updatectl-webhook.entrypoints=websecure"
+      - "traefik.http.routers.updatectl-webhook.tls.certresolver=letsencrypt"
+      - "traefik.http.services.updatectl-webhook.loadbalancer.server.port=8080"
 
   ofelia:
     image: mcuadros/ofelia:latest
