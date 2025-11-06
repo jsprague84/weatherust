@@ -298,7 +298,13 @@ async fn send_ntfy_with_topic(
 
     // Add actions if provided
     if let Some(acts) = actions {
-        json_body["actions"] = serde_json::to_value(acts)?;
+        if !acts.is_empty() {
+            json_body["actions"] = serde_json::to_value(acts)?;
+        }
+    }
+
+    if debug {
+        eprintln!("[ntfy] JSON payload: {}", serde_json::to_string_pretty(&json_body)?);
     }
 
     // When using JSON, post to base URL (topic is in JSON body)
