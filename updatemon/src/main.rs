@@ -218,8 +218,9 @@ fn generate_action_buttons(reports: &[String], servers: &[Server]) -> Vec<NtfyAc
         }
     }
 
-    // Limit to 4 buttons max (ntfy limitation)
-    actions.truncate(4);
+    // Limit to 3 buttons max (self-hosted ntfy typically allows 3, public ntfy.sh allows 4)
+    // Use 3 as the conservative default to ensure compatibility with all ntfy servers
+    actions.truncate(3);
 
     actions
 }
