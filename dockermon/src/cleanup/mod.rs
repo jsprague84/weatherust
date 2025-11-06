@@ -1,10 +1,10 @@
-mod types;
+pub mod types;
 mod images;
 mod networks;
 mod logs;
 mod volumes;
 
-pub use types::{CleanupReport, format_bytes};
+pub use types::{CleanupReport, format_bytes, ImageStats, ImageInfo, NetworkStats, NetworkInfo, LogStats, VolumeStats};
 
 use bollard::Docker;
 use anyhow::Result;

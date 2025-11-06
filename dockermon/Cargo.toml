@@ -14,3 +14,4 @@ bollard = { version = "0.16" }
 common = { path = "../common" }
 anyhow = "1"
 chrono = "0.4"
+ssh2 = "0.9"

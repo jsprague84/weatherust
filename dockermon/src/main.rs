@@ -7,6 +7,8 @@ use std::env;
 use tokio::time::{timeout, Duration};
 
 mod cleanup;
+mod executor;
+mod remote_cleanup;
 
 #[derive(Parser, Debug)]
 #[command(name = "dockermon")]
@@ -264,23 +266,23 @@ async fn run_cleanup(
     execute_safe: bool,
     prune_unused_images: bool,
     servers_arg: Option<String>,
-    local: bool,
+    _local: bool,
     ssh_key_arg: Option<String>,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    // Parse server list from args or env
+    // Parse server list
     let mut servers = Vec::new();
 
-    // Add remote servers if specified
-    let server_str = servers_arg
-        .or_else(|| std::env::var("UPDATE_SERVERS").ok())
-        .unwrap_or_default();
-
-    if !server_str.is_empty() {
-        servers.extend(parse_servers(&server_str)?);
+    // Only use UPDATE_SERVERS if --servers is explicitly provided
+    // This prevents trying to check all remote servers when run via Ofelia
+    if let Some(server_str) = servers_arg {
+        if !server_str.is_empty() {
+            servers.extend(parse_servers(&server_str)?);
+        }
     }
 
-    // Add localhost if --local flag is set OR if no servers specified (default to local)
-    if local || servers.is_empty() {
+    // Default behavior: analyze local server only
+    // Each server runs dockermon locally via Ofelia
+    if servers.is_empty() {
         servers.push(Server::local());
     }
 
@@ -317,7 +319,7 @@ async fn run_cleanup_for_server(
     execute_safe: bool,
     prune_unused_images: bool,
     quiet: bool,
-    _ssh_key: Option<&str>,
+    ssh_key: Option<&str>,
 ) -> Result<(), Box<dyn std::error::Error>> {
     // Allow a dockermon-specific Gotify token override
     if let Ok(tok) = std::env::var("DOCKERMON_GOTIFY_KEY") {
@@ -326,36 +328,55 @@ async fn run_cleanup_for_server(
         }
     }
 
-    // Connect to Docker (only local supported for now)
-    if !server.is_local() {
-        return Err(format!("Remote Docker connections not yet supported. Please run dockermon locally on {}", server.name).into());
-    }
+    // Analyze cleanup opportunities (local or remote)
+    let report = if server.is_local() {
+        // Local: Use Bollard
+        let docker = bollard::Docker::connect_with_unix_defaults()?;
+        cleanup::analyze_cleanup(&docker).await?
+    } else {
+        // Remote: Use SSH + Docker CLI
+        let executor = tokio::task::spawn_blocking({
+            let server = server.clone();
+            let ssh_key = ssh_key.map(|s| s.to_string());
+            move || executor::RemoteExecutor::new(&server, ssh_key.as_deref())
+        }).await??;
 
-    let docker = bollard::Docker::connect_with_unix_defaults()?;
+        remote_cleanup::analyze_cleanup_remote(&executor, &server.name).await?
+    };
 
-    // Analyze cleanup opportunities
-    let report = cleanup::analyze_cleanup(&docker).await?;
-
-    // Execute cleanup if requested
+    // Execute cleanup if requested (only for local servers)
     let mut execution_summary = Vec::new();
 
-    if execute_safe {
-        let result = cleanup::execute_safe_cleanup(&docker).await?;
-        execution_summary.push(format!(
-            "Safe cleanup: {} dangling images ({}) + {} unused networks removed",
-            result.dangling_images_removed,
-            cleanup::format_bytes(result.space_reclaimed_bytes),
-            result.networks_removed
-        ));
+    if execute_safe && !server.is_local() {
+        return Err(format!("Cleanup execution not supported for remote servers. Analysis only for {}", server.name).into());
     }
 
-    if prune_unused_images {
-        let result = cleanup::execute_unused_image_cleanup(&docker).await?;
-        execution_summary.push(format!(
-            "Unused images: {} removed ({})",
-            result.unused_images_removed,
-            cleanup::format_bytes(result.space_reclaimed_bytes)
-        ));
+    if prune_unused_images && !server.is_local() {
+        return Err(format!("Cleanup execution not supported for remote servers. Analysis only for {}", server.name).into());
+    }
+
+    if execute_safe || prune_unused_images {
+        // Cleanup execution requires local Docker connection
+        let docker = bollard::Docker::connect_with_unix_defaults()?;
+
+        if execute_safe {
+            let result = cleanup::execute_safe_cleanup(&docker).await?;
+            execution_summary.push(format!(
+                "Safe cleanup: {} dangling images ({}) + {} unused networks removed",
+                result.dangling_images_removed,
+                cleanup::format_bytes(result.space_reclaimed_bytes),
+                result.networks_removed
+            ));
+        }
+
+        if prune_unused_images {
+            let result = cleanup::execute_unused_image_cleanup(&docker).await?;
+            execution_summary.push(format!(
+                "Unused images: {} removed ({})",
+                result.unused_images_removed,
+                cleanup::format_bytes(result.space_reclaimed_bytes)
+            ));
+        }
     }
 
     // Format report with server name
