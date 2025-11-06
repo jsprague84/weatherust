@@ -93,12 +93,10 @@ services:
     restart: unless-stopped
     networks:
       proxy:
+    # Disable healthcheck - distroless image doesn't have wget/curl
+    # Traefik will handle health checking via HTTP
     healthcheck:
-      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost:8080/health"]
-      interval: 30s
-      timeout: 3s
-      retries: 3
-      start_period: 10s
+      disable: true
     labels:
       - "traefik.enable=true"
       - "traefik.http.routers.updatectl-webhook.entrypoints=http"
