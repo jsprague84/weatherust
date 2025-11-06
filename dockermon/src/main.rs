@@ -1,6 +1,6 @@
 use bollard::models::HealthStatusEnum;
 use clap::{Parser, Subcommand};
-use common::{dotenv_init, http_client, send_gotify_dockermon, send_ntfy_dockermon, NtfyAction};
+use common::{dotenv_init, http_client, send_gotify_dockermon, send_ntfy_dockermon, NtfyAction, Server, parse_servers};
 use futures_util::StreamExt;
 use std::collections::HashSet;
 use std::env;
@@ -53,6 +53,18 @@ enum Commands {
         /// Execute unused image cleanup (requires explicit flag)
         #[arg(long, default_value_t = false)]
         prune_unused_images: bool,
+
+        /// Comma-separated list of servers (name:user@host or just user@host)
+        #[arg(long)]
+        servers: Option<String>,
+
+        /// Include local system in the check (can be combined with --servers)
+        #[arg(long)]
+        local: bool,
+
+        /// SSH key path for remote connections
+        #[arg(long)]
+        ssh_key: Option<String>,
     },
 }
 
@@ -75,7 +87,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             quiet,
             execute_safe,
             prune_unused_images,
-        } => run_cleanup(quiet, execute_safe, prune_unused_images).await,
+            servers,
+            local,
+            ssh_key,
+        } => run_cleanup(quiet, execute_safe, prune_unused_images, servers, local, ssh_key).await,
     }
 }
 
@@ -248,6 +263,61 @@ async fn run_cleanup(
     quiet: bool,
     execute_safe: bool,
     prune_unused_images: bool,
+    servers_arg: Option<String>,
+    local: bool,
+    ssh_key_arg: Option<String>,
+) -> Result<(), Box<dyn std::error::Error>> {
+    // Parse server list from args or env
+    let mut servers = Vec::new();
+
+    // Add remote servers if specified
+    let server_str = servers_arg
+        .or_else(|| std::env::var("UPDATE_SERVERS").ok())
+        .unwrap_or_default();
+
+    if !server_str.is_empty() {
+        servers.extend(parse_servers(&server_str)?);
+    }
+
+    // Add localhost if --local flag is set OR if no servers specified (default to local)
+    if local || servers.is_empty() {
+        servers.push(Server::local());
+    }
+
+    let ssh_key = ssh_key_arg
+        .or_else(|| std::env::var("UPDATE_SSH_KEY").ok());
+
+    // Run cleanup on each server
+    for server in &servers {
+        if !quiet {
+            println!("Analyzing {}...", server.name);
+        }
+
+        match run_cleanup_for_server(server, execute_safe, prune_unused_images, quiet, ssh_key.as_deref()).await {
+            Ok(_) => {},
+            Err(e) => {
+                eprintln!("Error running cleanup on {}: {}", server.name, e);
+
+                // Send error notification
+                let client = http_client();
+                let title = format!("{} - Docker Cleanup: Error", server.name);
+                let message = format!("❌ Error: {}", e);
+
+                let _ = send_gotify_dockermon(&client, &title, &message).await;
+                let _ = send_ntfy_dockermon(&client, &title, &message, None).await;
+            }
+        }
+    }
+
+    Ok(())
+}
+
+async fn run_cleanup_for_server(
+    server: &Server,
+    execute_safe: bool,
+    prune_unused_images: bool,
+    quiet: bool,
+    _ssh_key: Option<&str>,
 ) -> Result<(), Box<dyn std::error::Error>> {
     // Allow a dockermon-specific Gotify token override
     if let Ok(tok) = std::env::var("DOCKERMON_GOTIFY_KEY") {
@@ -256,7 +326,11 @@ async fn run_cleanup(
         }
     }
 
-    // Connect to Docker via Unix socket
+    // Connect to Docker (only local supported for now)
+    if !server.is_local() {
+        return Err(format!("Remote Docker connections not yet supported. Please run dockermon locally on {}", server.name).into());
+    }
+
     let docker = bollard::Docker::connect_with_unix_defaults()?;
 
     // Analyze cleanup opportunities
@@ -284,11 +358,11 @@ async fn run_cleanup(
         ));
     }
 
-    // Format report
+    // Format report with server name
     let title = if execution_summary.is_empty() {
-        "Docker Cleanup: Analysis"
+        format!("{} - Docker Cleanup: Analysis", server.name)
     } else {
-        "Docker Cleanup: Complete"
+        format!("{} - Docker Cleanup: Complete", server.name)
     };
 
     let mut lines = Vec::new();
@@ -443,12 +517,12 @@ async fn run_cleanup(
     let client = http_client();
 
     // Send to Gotify (if configured) - full report
-    if let Err(e) = send_gotify_dockermon(&client, title, &body).await {
+    if let Err(e) = send_gotify_dockermon(&client, &title, &body).await {
         eprintln!("Gotify send error: {e}");
     }
 
     // Send to ntfy.sh (if configured) - with action buttons
-    if let Err(e) = send_ntfy_dockermon(&client, title, &body, ntfy_actions).await {
+    if let Err(e) = send_ntfy_dockermon(&client, &title, &body, ntfy_actions).await {
         eprintln!("ntfy send error: {e}");
     }
 
