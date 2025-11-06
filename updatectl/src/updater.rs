@@ -92,6 +92,7 @@ pub async fn update_docker(
     let mut failed = 0;
     let mut restarted = 0;
     let mut restart_failed = 0;
+    let mut skipped_webhook = false;
 
     for image in &image_list {
         // Pull the image
@@ -105,7 +106,18 @@ pub async fn update_docker(
                     Ok(containers) => {
                         if !containers.is_empty() {
                             log::info!("Found {} containers using {}: {}", containers.len(), image, containers.join(", "));
-                            for container in &containers {
+
+                            // Filter out webhook server to prevent it from killing itself mid-update
+                            let containers_to_restart: Vec<_> = containers.iter()
+                                .filter(|c| !c.contains("updatectl_webhook"))
+                                .collect();
+
+                            if containers_to_restart.len() < containers.len() {
+                                log::info!("Skipping webhook server restart (would interrupt notification)");
+                                skipped_webhook = true;
+                            }
+
+                            for container in &containers_to_restart {
                                 match executor.execute_command("/usr/bin/docker", &["restart", container]).await {
                                     Ok(_) => {
                                         log::info!("Restarted container: {}", container);
@@ -141,6 +153,9 @@ pub async fn update_docker(
     }
     if restart_failed > 0 {
         parts.push(format!("{} restart failures", restart_failed));
+    }
+    if skipped_webhook {
+        parts.push("webhook server needs manual restart".to_string());
     }
 
     Ok(parts.join(", "))
