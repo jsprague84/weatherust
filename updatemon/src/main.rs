@@ -120,18 +120,46 @@ async fn main() -> Result<()> {
         println!("\n{}", details);
     }
 
-    // Send to Gotify (if configured)
+    // Send to Gotify (if configured) - full details
     if let Err(e) = send_gotify_updatemon(&client, &summary, &details).await {
         eprintln!("Gotify send error: {e}");
     }
 
-    // Send to ntfy.sh (if configured) with action buttons
+    // Send to ntfy.sh (if configured) with action buttons - shortened message
     let actions = generate_action_buttons(&all_reports, &servers);
-    if let Err(e) = send_ntfy_updatemon(&client, &summary, &details, Some(actions)).await {
+    let short_details = format_short_summary(&all_reports, &servers);
+    if let Err(e) = send_ntfy_updatemon(&client, &summary, &short_details, Some(actions)).await {
         eprintln!("ntfy send error: {e}");
     }
 
     Ok(())
+}
+
+/// Format a short summary for ntfy (to avoid message size limits)
+fn format_short_summary(reports: &[String], servers: &[Server]) -> String {
+    let mut lines = Vec::new();
+
+    for (report, server) in reports.iter().zip(servers.iter()) {
+        let has_os_updates = report.contains("📦") && report.contains("OS:");
+        let has_docker_updates = report.contains("🐳") && report.contains("Docker:");
+
+        if has_os_updates || has_docker_updates {
+            let mut status = Vec::new();
+            if has_os_updates {
+                status.push("OS updates");
+            }
+            if has_docker_updates {
+                status.push("Docker updates");
+            }
+            lines.push(format!("🖥️  {} - {}", server.name, status.join(" + ")));
+        }
+    }
+
+    if lines.is_empty() {
+        "All systems up to date".to_string()
+    } else {
+        format!("Updates available:\n{}\n\nClick buttons below to update.", lines.join("\n"))
+    }
 }
 
 /// Generate action buttons for ntfy notification based on update status
