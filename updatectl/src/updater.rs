@@ -107,13 +107,18 @@ pub async fn update_docker(
                         if !containers.is_empty() {
                             log::info!("Found {} containers using {}: {}", containers.len(), image, containers.join(", "));
 
-                            // Filter out webhook server to prevent it from killing itself mid-update
+                            // Get restart policy and exclusion list
+                            let policy = get_restart_policy();
+                            let excluded = get_restart_exclusions(executor.server_name());
+
+                            // Filter containers based on policy and exclusions
                             let containers_to_restart: Vec<_> = containers.iter()
-                                .filter(|c| !c.contains("updatectl_webhook"))
+                                .filter(|c| should_restart_container(c, &policy, &excluded))
                                 .collect();
 
-                            if containers_to_restart.len() < containers.len() {
-                                log::info!("Skipping webhook server restart (would interrupt notification)");
+                            let skipped_count = containers.len() - containers_to_restart.len();
+                            if skipped_count > 0 {
+                                log::info!("Skipping {} container(s) based on restart policy", skipped_count);
                                 skipped_webhook = true;
                             }
 
@@ -155,7 +160,12 @@ pub async fn update_docker(
         parts.push(format!("{} restart failures", restart_failed));
     }
     if skipped_webhook {
-        parts.push("webhook server needs manual restart".to_string());
+        let policy = get_restart_policy();
+        if policy == "none" {
+            parts.push("no containers restarted (policy: none)".to_string());
+        } else {
+            parts.push("some containers excluded from restart".to_string());
+        }
     }
 
     Ok(parts.join(", "))
@@ -194,6 +204,58 @@ async fn get_containers_using_image(executor: &RemoteExecutor, image: &str) -> R
         .collect();
 
     Ok(containers)
+}
+
+/// Get restart policy from environment
+fn get_restart_policy() -> String {
+    std::env::var("UPDATECTL_RESTART_POLICY")
+        .unwrap_or_else(|_| "all-except-webhook".to_string())
+}
+
+/// Get container exclusion list for a specific server
+fn get_restart_exclusions(server_name: &str) -> Vec<String> {
+    // Try server-specific exclusions first
+    let server_key = format!("UPDATECTL_RESTART_EXCLUDE_{}",
+        server_name.replace('-', "_").replace(' ', "_").to_uppercase()
+    );
+
+    if let Ok(excludes) = std::env::var(&server_key) {
+        return excludes.split(',')
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty())
+            .collect();
+    }
+
+    Vec::new()
+}
+
+/// Check if a container should be restarted based on policy and exclusions
+fn should_restart_container(container_name: &str, policy: &str, excluded: &[String]) -> bool {
+    // Check if container is in exclusion list
+    if excluded.iter().any(|ex| container_name.contains(ex)) {
+        log::info!("Container {} excluded by UPDATECTL_RESTART_EXCLUDE", container_name);
+        return false;
+    }
+
+    // Apply policy
+    match policy {
+        "none" => {
+            log::info!("Container {} skipped (policy: none)", container_name);
+            false
+        }
+        "all-except-webhook" => {
+            if container_name.contains("updatectl_webhook") {
+                log::info!("Container {} skipped (webhook server)", container_name);
+                false
+            } else {
+                true
+            }
+        }
+        _ => {
+            log::warn!("Unknown restart policy '{}', defaulting to all-except-webhook", policy);
+            !container_name.contains("updatectl_webhook")
+        }
+    }
 }
 
 /// Parse apt-get upgrade output to count updated packages

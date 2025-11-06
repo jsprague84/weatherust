@@ -19,6 +19,11 @@ impl RemoteExecutor {
         })
     }
 
+    /// Get the server name for this executor
+    pub fn server_name(&self) -> &str {
+        &self.server.name
+    }
+
     /// Execute a command (locally or via SSH)
     /// Public so other modules (like docker) can use it
     pub async fn execute_command(&self, cmd: &str, args: &[&str]) -> Result<String> {
