@@ -40,11 +40,14 @@ async fn analyze_dangling_images_remote(executor: &RemoteExecutor) -> Result<Ima
     let mut stats = ImageStats::default();
 
     for line in output.lines() {
-        if line.trim().is_empty() {
+        let trimmed = line.trim();
+        if trimmed.is_empty() {
             continue;
         }
 
-        let image: Value = serde_json::from_str(line)?;
+        // Parse JSON, with better error context
+        let image: Value = serde_json::from_str(trimmed)
+            .map_err(|e| anyhow::anyhow!("Failed to parse Docker JSON output: '{}' - Error: {}", trimmed, e))?;
         let size_str = image["Size"].as_str().unwrap_or("0B");
         let size_bytes = parse_docker_size(size_str);
 
@@ -81,11 +84,13 @@ async fn analyze_unused_networks_remote(executor: &RemoteExecutor) -> Result<Net
     let mut stats = NetworkStats::default();
 
     for line in output.lines() {
-        if line.trim().is_empty() {
+        let trimmed = line.trim();
+        if trimmed.is_empty() {
             continue;
         }
 
-        let network: Value = serde_json::from_str(line)?;
+        let network: Value = serde_json::from_str(trimmed)
+            .map_err(|e| anyhow::anyhow!("Failed to parse Docker network JSON: '{}' - Error: {}", trimmed, e))?;
         let name = network["Name"].as_str().unwrap_or("").to_string();
 
         // Skip default networks
