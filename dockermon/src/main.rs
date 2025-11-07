@@ -496,12 +496,15 @@ async fn run_cleanup_for_server(
 
         let mut actions = Vec::new();
 
+        // URL-encode the token since it may contain special characters
+        let encoded_token = urlencoding::encode(&webhook_secret);
+
         // Add safe cleanup button if there are dangling images or unused networks
         if report.dangling_images.count > 0 || report.unused_networks.count > 0 {
             actions.push(
                 NtfyAction::http_post(
                     "Safe Cleanup",
-                    &format!("{}/webhook/cleanup/safe?token={}", webhook_url, webhook_secret)
+                    &format!("{}/webhook/cleanup/safe?token={}", webhook_url, encoded_token)
                 )
             );
         }
@@ -511,7 +514,7 @@ async fn run_cleanup_for_server(
             actions.push(
                 NtfyAction::http_post(
                     "Prune Unused Images",
-                    &format!("{}/webhook/cleanup/images/prune-unused?token={}", webhook_url, webhook_secret)
+                    &format!("{}/webhook/cleanup/images/prune-unused?token={}", webhook_url, encoded_token)
                 )
             );
         }
