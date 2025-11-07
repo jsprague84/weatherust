@@ -14,7 +14,7 @@ use std::collections::HashMap;
 use tower_http::trace::TraceLayer;
 
 use crate::types::Server;
-use crate::executor::RemoteExecutor;
+use common::RemoteExecutor;
 use crate::updater::{update_os, update_docker};
 
 #[derive(Clone)]

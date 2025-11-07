@@ -4,6 +4,9 @@ use reqwest::Client;
 use serde::{Deserialize, Serialize};
 use std::env;
 
+pub mod executor;
+pub use executor::RemoteExecutor;
+
 pub fn dotenv_init() {
     let _ = dotenv();
 }

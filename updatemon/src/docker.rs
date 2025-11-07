@@ -1,7 +1,7 @@
 use anyhow::Result;
 use serde::Deserialize;
 
-use crate::executor::RemoteExecutor;
+use common::RemoteExecutor;
 
 /// Represents a Docker image with update status
 #[derive(Debug, Clone)]

@@ -10,7 +10,8 @@ mod docker;
 
 use types::Server;
 use checkers::get_checker;
-use executor::RemoteExecutor;
+use common::RemoteExecutor;
+use executor::UpdatemonExecutor;
 
 /// Update monitoring tool - checks for OS and Docker updates across multiple servers
 #[derive(Parser, Debug)]

@@ -1,5 +1,8 @@
 use anyhow::{anyhow, Result};
 
+// Re-export Server from common
+pub use common::Server;
+
 /// Package manager types we support
 #[derive(Debug, Clone, PartialEq)]
 pub enum PackageManager {
@@ -34,87 +37,6 @@ impl PackageManager {
             PackageManager::Dnf,
             PackageManager::Pacman,
         ]
-    }
-}
-
-/// Represents a server to check
-#[derive(Debug, Clone)]
-pub struct Server {
-    pub name: String,
-    pub ssh_host: Option<String>, // None = local, Some = user@host
-}
-
-impl Server {
-    /// Create a local server instance with optional custom name and display
-    pub fn local() -> Self {
-        let name = std::env::var("UPDATE_LOCAL_NAME")
-            .unwrap_or_else(|_| "localhost".to_string());
-
-        Server {
-            name,
-            ssh_host: None,
-        }
-    }
-
-    /// Parse server from string
-    /// Format: "name:user@host" or "user@host" (name derived from host)
-    /// Special: "name:local" or "name:localhost" creates a localhost server with custom name
-    pub fn parse(input: &str) -> Result<Self> {
-        let parts: Vec<&str> = input.split(':').collect();
-
-        match parts.len() {
-            1 => {
-                let part = parts[0].trim();
-
-                // Check if this is a localhost indicator
-                if part.eq_ignore_ascii_case("local") || part.eq_ignore_ascii_case("localhost") {
-                    return Ok(Server::local());
-                }
-
-                // Otherwise it's "user@host"
-                let ssh_host = part.to_string();
-                let name = ssh_host.split('@').last().unwrap_or("unknown").to_string();
-                Ok(Server {
-                    name,
-                    ssh_host: Some(ssh_host),
-                })
-            }
-            2 => {
-                let name = parts[0].trim();
-                let host = parts[1].trim();
-
-                // Check if host part is localhost indicator
-                if host.eq_ignore_ascii_case("local") || host.eq_ignore_ascii_case("localhost") {
-                    return Ok(Server {
-                        name: name.to_string(),
-                        ssh_host: None,
-                    });
-                }
-
-                // Normal "name:user@host"
-                Ok(Server {
-                    name: name.to_string(),
-                    ssh_host: Some(host.to_string()),
-                })
-            }
-            _ => Err(anyhow!("Invalid server format: {}. Expected 'name:user@host' or 'user@host'", input)),
-        }
-    }
-
-    /// Is this the local system?
-    pub fn is_local(&self) -> bool {
-        self.ssh_host.is_none()
-    }
-
-    /// Get display host string
-    pub fn display_host(&self) -> String {
-        if self.is_local() {
-            // Check for custom localhost display
-            std::env::var("UPDATE_LOCAL_DISPLAY")
-                .unwrap_or_else(|_| "local".to_string())
-        } else {
-            self.ssh_host.clone().unwrap()
-        }
     }
 }
 

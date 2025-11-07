@@ -276,7 +276,8 @@ async fn execute_update(
     dry_run: bool,
     ssh_key: Option<&str>,
 ) -> Result<String> {
-    use executor::RemoteExecutor;
+    use common::RemoteExecutor;
+    use crate::executor::UpdatectlExecutor;
 
     let executor = RemoteExecutor::new(server.clone(), ssh_key)?;
     let mut report_lines = Vec::new();

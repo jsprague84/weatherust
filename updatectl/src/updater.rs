@@ -1,5 +1,6 @@
 use anyhow::Result;
-use crate::executor::RemoteExecutor;
+use common::RemoteExecutor;
+use crate::executor::UpdatectlExecutor;
 use crate::types::PackageManager;
 use crate::checkers::get_checker;
 
