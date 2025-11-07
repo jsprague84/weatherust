@@ -321,6 +321,10 @@ fn build_server_registry() -> Result<std::collections::HashMap<String, Server>> 
     let server_str = std::env::var("UPDATE_SERVERS").unwrap_or_default();
     let mut registry = HashMap::new();
 
+    // Always include local server in registry for webhook support
+    let local_server = Server::local();
+    registry.insert(local_server.name.clone(), local_server);
+
     if !server_str.is_empty() {
         for server_def in server_str.split(',') {
             let server = Server::parse(server_def.trim())?;
