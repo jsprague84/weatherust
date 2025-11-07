@@ -77,19 +77,25 @@ impl RemoteExecutor {
         channel.exec(command)
             .context(format!("Failed to execute command: {}", command))?;
 
+        // Read stdout
         let mut output = String::new();
         channel.read_to_string(&mut output)
             .context("Failed to read command output")?;
 
+        // Read stderr BEFORE closing the channel
+        let mut stderr = String::new();
+        channel.stderr().read_to_string(&mut stderr)
+            .context("Failed to read command stderr")?;
+
+        // Now wait for channel to close
         channel.wait_close()
             .context("Failed to close channel")?;
 
+        // Get exit status
         let exit_status = channel.exit_status()
             .context("Failed to get exit status")?;
 
         if exit_status != 0 {
-            let mut stderr = String::new();
-            channel.stderr().read_to_string(&mut stderr).ok();
             return Err(anyhow::anyhow!(
                 "Command failed with exit code {}: {}\nStderr: {}",
                 exit_status,
