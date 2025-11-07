@@ -99,7 +99,9 @@ impl RemoteExecutor {
         ssh_cmd.arg("-o")
             .arg("BatchMode=yes") // No interactive prompts
             .arg("-o")
-            .arg("StrictHostKeyChecking=accept-new"); // Accept new host keys
+            .arg("StrictHostKeyChecking=no") // Don't check host keys
+            .arg("-o")
+            .arg("UserKnownHostsFile=/dev/null"); // Don't save host keys (read-only .ssh mount)
 
         // Add SSH key if specified
         if let Some(key_path) = &self.ssh_key {
