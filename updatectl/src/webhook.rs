@@ -35,6 +35,7 @@ pub struct WebhookQuery {
 
 #[derive(Debug, Deserialize)]
 pub struct CleanupQuery {
+    server: String,
     token: String,
 }
 
@@ -69,8 +70,8 @@ pub async fn serve_webhooks(
     println!("  POST /webhook/update/os?server=<name>&token=<secret>");
     println!("  POST /webhook/update/docker/all?server=<name>&token=<secret>");
     println!("  POST /webhook/update/docker/image?server=<name>&image=<image>&token=<secret>");
-    println!("  POST /webhook/cleanup/safe?token=<secret>");
-    println!("  POST /webhook/cleanup/images/prune-unused?token=<secret>");
+    println!("  POST /webhook/cleanup/safe?server=<name>&token=<secret>");
+    println!("  POST /webhook/cleanup/images/prune-unused?server=<name>&token=<secret>");
     println!("  GET  /health");
 
     let listener = tokio::net::TcpListener::bind(addr).await?;
@@ -256,18 +257,34 @@ async fn handle_cleanup_safe(
         return (StatusCode::UNAUTHORIZED, "Invalid token".to_string());
     }
 
-    log::info!("Webhook triggered: Safe cleanup (dangling images + unused networks)");
+    // Get server from registry
+    let server = match state.servers.get(&params.server) {
+        Some(s) => s.clone(),
+        None => {
+            log::error!("Unknown server: {}", params.server);
+            return (StatusCode::BAD_REQUEST, format!("Unknown server: {}", params.server));
+        }
+    };
 
+    log::info!("Webhook triggered: Safe cleanup for {}", server.name);
+
+    let ssh_key = state.ssh_key.clone();
     let client = state.client.clone();
     tokio::spawn(async move {
-        let (title, message) = match execute_safe_cleanup().await {
+        let (title, message) = match execute_safe_cleanup_for_server(&server, ssh_key.as_deref()).await {
             Ok(msg) => {
                 log::info!("Safe cleanup completed: {}", msg);
-                ("Docker Cleanup: Safe cleanup complete".to_string(), format!("✅ {}", msg))
+                (
+                    format!("{} - Docker Cleanup: Complete", server.name),
+                    format!("✅ {}", msg)
+                )
             }
             Err(e) => {
                 log::error!("Safe cleanup failed: {}", e);
-                ("Docker Cleanup: Safe cleanup failed".to_string(), format!("❌ Error: {}", e))
+                (
+                    format!("{} - Docker Cleanup: Failed", server.name),
+                    format!("❌ Error: {}", e)
+                )
             }
         };
 
@@ -280,7 +297,7 @@ async fn handle_cleanup_safe(
         }
     });
 
-    (StatusCode::ACCEPTED, "Safe cleanup started".to_string())
+    (StatusCode::ACCEPTED, format!("Safe cleanup started for {}", params.server))
 }
 
 async fn handle_cleanup_prune_unused(
@@ -292,18 +309,34 @@ async fn handle_cleanup_prune_unused(
         return (StatusCode::UNAUTHORIZED, "Invalid token".to_string());
     }
 
-    log::info!("Webhook triggered: Prune unused images");
+    // Get server from registry
+    let server = match state.servers.get(&params.server) {
+        Some(s) => s.clone(),
+        None => {
+            log::error!("Unknown server: {}", params.server);
+            return (StatusCode::BAD_REQUEST, format!("Unknown server: {}", params.server));
+        }
+    };
 
+    log::info!("Webhook triggered: Prune unused images for {}", server.name);
+
+    let ssh_key = state.ssh_key.clone();
     let client = state.client.clone();
     tokio::spawn(async move {
-        let (title, message) = match execute_prune_unused_images().await {
+        let (title, message) = match execute_prune_unused_images_for_server(&server, ssh_key.as_deref()).await {
             Ok(msg) => {
                 log::info!("Unused image cleanup completed: {}", msg);
-                ("Docker Cleanup: Unused images pruned".to_string(), format!("✅ {}", msg))
+                (
+                    format!("{} - Docker Cleanup: Unused images pruned", server.name),
+                    format!("✅ {}", msg)
+                )
             }
             Err(e) => {
                 log::error!("Unused image cleanup failed: {}", e);
-                ("Docker Cleanup: Unused image prune failed".to_string(), format!("❌ Error: {}", e))
+                (
+                    format!("{} - Docker Cleanup: Unused image prune failed", server.name),
+                    format!("❌ Error: {}", e)
+                )
             }
         };
 
@@ -316,7 +349,7 @@ async fn handle_cleanup_prune_unused(
         }
     });
 
-    (StatusCode::ACCEPTED, "Unused image cleanup started".to_string())
+    (StatusCode::ACCEPTED, format!("Unused image cleanup started for {}", params.server))
 }
 
 async fn execute_os_update(server: &Server, ssh_key: Option<&str>) -> Result<String> {
@@ -336,7 +369,15 @@ async fn execute_docker_update(
     Ok(format!("Docker: {}", result))
 }
 
-async fn execute_safe_cleanup() -> Result<String> {
+async fn execute_safe_cleanup_for_server(server: &Server, ssh_key: Option<&str>) -> Result<String> {
+    if server.is_local() {
+        execute_safe_cleanup_local().await
+    } else {
+        execute_safe_cleanup_remote(server, ssh_key).await
+    }
+}
+
+async fn execute_safe_cleanup_local() -> Result<String> {
     use bollard::Docker;
     use bollard::image::PruneImagesOptions;
     use bollard::network::PruneNetworksOptions;
@@ -372,7 +413,59 @@ async fn execute_safe_cleanup() -> Result<String> {
     Ok(format!("Removed {} | Reclaimed {}", results.join(" + "), space_str))
 }
 
-async fn execute_prune_unused_images() -> Result<String> {
+async fn execute_safe_cleanup_remote(server: &Server, ssh_key: Option<&str>) -> Result<String> {
+    let executor = RemoteExecutor::new(server.clone(), ssh_key)?;
+
+    let mut results = Vec::new();
+    let mut total_space_reclaimed: u64 = 0;
+
+    // Prune dangling images
+    let prune_images_output = executor.execute_command(
+        "/usr/bin/docker",
+        &["image", "prune", "-f", "--filter", "dangling=true"]
+    ).await?;
+
+    // Parse output to count removed images and space reclaimed
+    // Docker output format: "Deleted Images:\nuntagged: ...\ndeleted: sha256:...\n\nTotal reclaimed space: 1.23GB"
+    let image_count = prune_images_output.lines()
+        .filter(|line| line.starts_with("deleted:") || line.starts_with("untagged:"))
+        .count();
+    let image_space = parse_reclaimed_space(&prune_images_output);
+    total_space_reclaimed += image_space;
+    results.push(format!("{} dangling images", image_count));
+
+    // Prune unused networks
+    let prune_networks_output = executor.execute_command(
+        "/usr/bin/docker",
+        &["network", "prune", "-f"]
+    ).await?;
+
+    // Count networks from output
+    let network_count = prune_networks_output.lines()
+        .filter(|line| !line.is_empty() && !line.contains("WARNING") && !line.contains("Deleted Networks"))
+        .count();
+    results.push(format!("{} unused networks", network_count));
+
+    let space_str = if total_space_reclaimed >= 1024 * 1024 * 1024 {
+        format!("{:.2}GB", total_space_reclaimed as f64 / (1024.0 * 1024.0 * 1024.0))
+    } else if total_space_reclaimed >= 1024 * 1024 {
+        format!("{}MB", total_space_reclaimed / (1024 * 1024))
+    } else {
+        format!("{}KB", total_space_reclaimed / 1024)
+    };
+
+    Ok(format!("Removed {} | Reclaimed {}", results.join(" + "), space_str))
+}
+
+async fn execute_prune_unused_images_for_server(server: &Server, ssh_key: Option<&str>) -> Result<String> {
+    if server.is_local() {
+        execute_prune_unused_images_local().await
+    } else {
+        execute_prune_unused_images_remote(server, ssh_key).await
+    }
+}
+
+async fn execute_prune_unused_images_local() -> Result<String> {
     use bollard::Docker;
     use bollard::image::PruneImagesOptions;
 
@@ -392,4 +485,69 @@ async fn execute_prune_unused_images() -> Result<String> {
     };
 
     Ok(format!("Removed {} unused images | Reclaimed {}", count, space_str))
+}
+
+async fn execute_prune_unused_images_remote(server: &Server, ssh_key: Option<&str>) -> Result<String> {
+    let executor = RemoteExecutor::new(server.clone(), ssh_key)?;
+
+    // Prune all unused images (not just dangling) - this is more aggressive
+    let prune_output = executor.execute_command(
+        "/usr/bin/docker",
+        &["image", "prune", "-a", "-f"]
+    ).await?;
+
+    // Parse output to count removed images and space reclaimed
+    let count = prune_output.lines()
+        .filter(|line| line.starts_with("deleted:") || line.starts_with("untagged:"))
+        .count();
+    let space = parse_reclaimed_space(&prune_output);
+
+    let space_str = if space >= 1024 * 1024 * 1024 {
+        format!("{:.2}GB", space as f64 / (1024.0 * 1024.0 * 1024.0))
+    } else if space >= 1024 * 1024 {
+        format!("{}MB", space / (1024 * 1024))
+    } else {
+        format!("{}KB", space / 1024)
+    };
+
+    Ok(format!("Removed {} unused images | Reclaimed {}", count, space_str))
+}
+
+/// Parse Docker's "Total reclaimed space: X.XXkB/MB/GB" output
+fn parse_reclaimed_space(output: &str) -> u64 {
+    for line in output.lines() {
+        if line.contains("Total reclaimed space:") || line.contains("reclaimed:") {
+            // Extract the size part (e.g., "1.23GB" or "456MB")
+            let parts: Vec<&str> = line.split_whitespace().collect();
+            if let Some(size_str) = parts.last() {
+                return parse_docker_size_str(size_str);
+            }
+        }
+    }
+    0
+}
+
+/// Parse Docker size string (e.g., "1.5GB", "250MB", "1.2kB")
+fn parse_docker_size_str(size_str: &str) -> u64 {
+    let size_str = size_str.trim().to_uppercase();
+
+    // Extract number and unit
+    let (num_str, multiplier) = if size_str.ends_with("GB") {
+        (&size_str[..size_str.len()-2], 1024 * 1024 * 1024)
+    } else if size_str.ends_with("MB") {
+        (&size_str[..size_str.len()-2], 1024 * 1024)
+    } else if size_str.ends_with("KB") {
+        (&size_str[..size_str.len()-2], 1024)
+    } else if size_str.ends_with('B') {
+        (&size_str[..size_str.len()-1], 1)
+    } else {
+        (size_str.as_str(), 1)
+    };
+
+    // Parse the number (may be float like "1.5")
+    if let Ok(num) = num_str.parse::<f64>() {
+        (num * multiplier as f64) as u64
+    } else {
+        0
+    }
 }
