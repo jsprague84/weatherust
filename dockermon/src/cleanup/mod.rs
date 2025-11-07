@@ -1,10 +1,19 @@
 pub mod types;
 mod images;
 mod networks;
+mod build_cache;
+mod containers;
 mod logs;
 mod volumes;
 
-pub use types::{CleanupReport, format_bytes, ImageStats, ImageInfo, NetworkStats, NetworkInfo, LogStats, VolumeStats};
+pub use types::{
+    CleanupReport, format_bytes,
+    ImageStats, ImageInfo,
+    NetworkStats, NetworkInfo,
+    BuildCacheStats, BuildCacheItem,
+    ContainerStats, ContainerInfo,
+    LogStats, VolumeStats
+};
 
 use bollard::Docker;
 use anyhow::Result;
@@ -20,6 +29,12 @@ pub async fn analyze_cleanup(docker: &Docker) -> Result<CleanupReport> {
     // Analyze networks
     report.unused_networks = networks::analyze_unused_networks(docker).await?;
 
+    // Analyze build cache
+    report.build_cache = build_cache::analyze_build_cache(docker).await?;
+
+    // Analyze stopped containers
+    report.stopped_containers = containers::analyze_stopped_containers(docker).await?;
+
     // Analyze container logs
     report.large_logs = logs::analyze_large_logs(docker).await?;
 
@@ -32,7 +47,7 @@ pub async fn analyze_cleanup(docker: &Docker) -> Result<CleanupReport> {
     Ok(report)
 }
 
-/// Execute safe cleanup operations (dangling images + unused networks)
+/// Execute safe cleanup operations (dangling images + unused networks + build cache + stopped containers)
 pub async fn execute_safe_cleanup(docker: &Docker) -> Result<CleanupResult> {
     let mut result = CleanupResult::default();
 
@@ -51,6 +66,24 @@ pub async fn execute_safe_cleanup(docker: &Docker) -> Result<CleanupResult> {
             result.networks_removed = count;
         }
         Err(e) => result.errors.push(format!("Failed to prune networks: {}", e)),
+    }
+
+    // Prune build cache (unused only)
+    match build_cache::prune_build_cache(docker).await {
+        Ok(stats) => {
+            result.build_cache_reclaimed = stats.space_reclaimed;
+            result.space_reclaimed_bytes += stats.space_reclaimed;
+        }
+        Err(e) => result.errors.push(format!("Failed to prune build cache: {}", e)),
+    }
+
+    // Prune stopped containers (older than threshold)
+    match containers::prune_stopped_containers(docker).await {
+        Ok(stats) => {
+            result.stopped_containers_removed = stats.count;
+            result.space_reclaimed_bytes += stats.space_reclaimed;
+        }
+        Err(e) => result.errors.push(format!("Failed to prune stopped containers: {}", e)),
     }
 
     Ok(result)
@@ -77,6 +110,8 @@ pub struct CleanupResult {
     pub dangling_images_removed: usize,
     pub unused_images_removed: usize,
     pub networks_removed: usize,
+    pub build_cache_reclaimed: u64,
+    pub stopped_containers_removed: usize,
     pub space_reclaimed_bytes: u64,
     pub errors: Vec<String>,
 }
@@ -95,6 +130,14 @@ impl CleanupResult {
 
         if self.networks_removed > 0 {
             parts.push(format!("Removed {} unused networks", self.networks_removed));
+        }
+
+        if self.build_cache_reclaimed > 0 {
+            parts.push(format!("Cleared {} build cache", format_bytes(self.build_cache_reclaimed)));
+        }
+
+        if self.stopped_containers_removed > 0 {
+            parts.push(format!("Removed {} stopped containers", self.stopped_containers_removed));
         }
 
         if self.space_reclaimed_bytes > 0 {

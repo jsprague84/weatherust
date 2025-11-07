@@ -7,6 +7,8 @@ pub struct CleanupReport {
     pub dangling_images: ImageStats,
     pub unused_images: ImageStats,
     pub unused_networks: NetworkStats,
+    pub build_cache: BuildCacheStats,
+    pub stopped_containers: ContainerStats,
     pub large_logs: LogStats,
     pub volumes: VolumeStats,
     pub total_reclaimable_bytes: u64,
@@ -19,17 +21,21 @@ impl CleanupReport {
             dangling_images: ImageStats::default(),
             unused_images: ImageStats::default(),
             unused_networks: NetworkStats::default(),
+            build_cache: BuildCacheStats::default(),
+            stopped_containers: ContainerStats::default(),
             large_logs: LogStats::default(),
             volumes: VolumeStats::default(),
             total_reclaimable_bytes: 0,
         }
     }
 
-    /// Calculate total reclaimable space (dangling images + unused networks)
-    /// Excludes unused images (need confirmation) and logs/volumes (manual action)
+    /// Calculate total reclaimable space (safe to auto-cleanup)
+    /// Includes: dangling images, build cache, stopped containers
+    /// Excludes: unused images (need confirmation), unused networks (no size), logs/volumes (manual)
     pub fn calculate_reclaimable(&mut self) {
-        self.total_reclaimable_bytes = self.dangling_images.total_size_bytes;
-        // Networks don't have size, but are reclaimable
+        self.total_reclaimable_bytes = self.dangling_images.total_size_bytes
+            + self.build_cache.total_size_bytes
+            + self.stopped_containers.total_size_bytes;
     }
 }
 
@@ -111,6 +117,47 @@ pub struct VolumeInfo {
     pub size_bytes: u64,
     pub created_timestamp: i64,
     pub containers_using: Vec<String>,
+}
+
+/// Statistics about Docker build cache
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct BuildCacheStats {
+    pub total_size_bytes: u64,
+    pub reclaimable_bytes: u64,
+    pub items: Vec<BuildCacheItem>,
+}
+
+/// Information about a build cache item
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct BuildCacheItem {
+    pub id: String,
+    pub cache_type: String, // "regular", "internal", "frontend", "source"
+    pub size_bytes: u64,
+    pub created_timestamp: i64,
+    pub last_used_timestamp: Option<i64>,
+    pub in_use: bool,
+    pub shared: bool,
+}
+
+/// Statistics about stopped containers
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct ContainerStats {
+    pub count: usize,
+    pub total_size_bytes: u64,
+    pub items: Vec<ContainerInfo>,
+}
+
+/// Information about a stopped container
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ContainerInfo {
+    pub id: String,
+    pub name: String,
+    pub image: String,
+    pub size_bytes: u64,
+    pub created_timestamp: i64,
+    pub stopped_timestamp: Option<i64>,
+    pub exit_code: Option<i64>,
+    pub status: String,
 }
 
 /// Format bytes as human-readable size

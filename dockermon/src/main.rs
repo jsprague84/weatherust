@@ -356,11 +356,24 @@ async fn run_cleanup_for_server(
 
         if execute_safe {
             let result = cleanup::execute_safe_cleanup(&docker).await?;
+            let mut parts = Vec::new();
+            if result.dangling_images_removed > 0 {
+                parts.push(format!("{} dangling images", result.dangling_images_removed));
+            }
+            if result.networks_removed > 0 {
+                parts.push(format!("{} unused networks", result.networks_removed));
+            }
+            if result.build_cache_reclaimed > 0 {
+                parts.push(format!("{} build cache", cleanup::format_bytes(result.build_cache_reclaimed)));
+            }
+            if result.stopped_containers_removed > 0 {
+                parts.push(format!("{} stopped containers", result.stopped_containers_removed));
+            }
+
             execution_summary.push(format!(
-                "Safe cleanup: {} dangling images ({}) + {} unused networks removed",
-                result.dangling_images_removed,
-                cleanup::format_bytes(result.space_reclaimed_bytes),
-                result.networks_removed
+                "Safe cleanup: {} removed | {} reclaimed",
+                parts.join(" + "),
+                cleanup::format_bytes(result.space_reclaimed_bytes)
             ));
         }
 
@@ -435,6 +448,42 @@ async fn run_cleanup_for_server(
         lines.push(format!("Unused Networks: {}", report.unused_networks.count));
         for item in report.unused_networks.items.iter().take(5) {
             lines.push(format!("  • {} ({})", item.name, item.driver));
+        }
+        lines.push("".to_string());
+    }
+
+    // Build cache
+    if report.build_cache.total_size_bytes > 0 {
+        lines.push(format!(
+            "Build Cache: {} total ({} reclaimable)",
+            cleanup::format_bytes(report.build_cache.total_size_bytes),
+            cleanup::format_bytes(report.build_cache.reclaimable_bytes)
+        ));
+        let in_use_count = report.build_cache.items.iter().filter(|item| item.in_use).count();
+        let unused_count = report.build_cache.items.len() - in_use_count;
+        if unused_count > 0 {
+            lines.push(format!("  • {} unused cache items", unused_count));
+        }
+        if in_use_count > 0 {
+            lines.push(format!("  • {} in-use cache items", in_use_count));
+        }
+        lines.push("".to_string());
+    }
+
+    // Stopped containers
+    if report.stopped_containers.count > 0 {
+        lines.push(format!(
+            "Stopped Containers: {} ({})",
+            report.stopped_containers.count,
+            cleanup::format_bytes(report.stopped_containers.total_size_bytes)
+        ));
+        for item in report.stopped_containers.items.iter().take(5) {
+            lines.push(format!(
+                "  • {} [{}] ({})",
+                item.name,
+                item.status,
+                cleanup::format_bytes(item.size_bytes)
+            ));
         }
         lines.push("".to_string());
     }
