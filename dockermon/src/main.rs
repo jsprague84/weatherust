@@ -495,7 +495,7 @@ async fn run_cleanup_for_server(
     let ntfy_actions = if !cleanup_was_executed && report.total_reclaimable_bytes > 0 {
         // Get webhook base URL from env
         let webhook_url = env::var("UPDATECTL_WEBHOOK_URL")
-            .unwrap_or_else(|_| "http://localhost:8080/webhook".to_string());
+            .unwrap_or_else(|_| "http://localhost:8080".to_string());
         let webhook_secret = env::var("UPDATECTL_WEBHOOK_SECRET")
             .unwrap_or_else(|_| "your_secret_token".to_string());
 
@@ -506,7 +506,7 @@ async fn run_cleanup_for_server(
             actions.push(
                 NtfyAction::http_post(
                     "Safe Cleanup",
-                    &format!("{}/cleanup/safe", webhook_url)
+                    &format!("{}/webhook/cleanup/safe", webhook_url)
                 )
                 .with_headers(serde_json::json!({
                     "Authorization": format!("Bearer {}", webhook_secret)
@@ -519,7 +519,7 @@ async fn run_cleanup_for_server(
             actions.push(
                 NtfyAction::http_post(
                     "Prune Unused Images",
-                    &format!("{}/cleanup/images/prune-unused", webhook_url)
+                    &format!("{}/webhook/cleanup/images/prune-unused", webhook_url)
                 )
                 .with_headers(serde_json::json!({
                     "Authorization": format!("Bearer {}", webhook_secret)
