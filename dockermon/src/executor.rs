@@ -1,109 +1,66 @@
-use anyhow::{Context, Result};
+use anyhow::{anyhow, Result};
 use common::Server;
-use std::io::Read;
-use std::net::TcpStream;
-use std::path::Path;
+use tokio::process::Command;
+use tokio::time::{timeout, Duration};
 
 /// Execute commands on remote servers via SSH
 pub struct RemoteExecutor {
-    session: ssh2::Session,
+    server: Server,
+    ssh_key: Option<String>,
 }
 
 impl RemoteExecutor {
     /// Create a new remote executor for the given server
     pub fn new(server: &Server, ssh_key_path: Option<&str>) -> Result<Self> {
         if server.is_local() {
-            return Err(anyhow::anyhow!("Cannot create SSH executor for local server"));
+            return Err(anyhow!("Cannot create SSH executor for local server"));
         }
 
-        let ssh_host = server.ssh_host.as_ref().unwrap();
-
-        // Parse user@host
-        let parts: Vec<&str> = ssh_host.split('@').collect();
-        if parts.len() != 2 {
-            return Err(anyhow::anyhow!("Invalid SSH host format. Expected user@host"));
-        }
-        let (user, host) = (parts[0], parts[1]);
-
-        // Connect via TCP
-        let tcp = TcpStream::connect(format!("{}:22", host))
-            .context(format!("Failed to connect to {}", host))?;
-
-        let mut session = ssh2::Session::new()
-            .context("Failed to create SSH session")?;
-        session.set_tcp_stream(tcp);
-        session.handshake()
-            .context("SSH handshake failed")?;
-
-        // Authenticate
-        if let Some(key_path) = ssh_key_path {
-            session.userauth_pubkey_file(user, None, Path::new(key_path), None)
-                .context(format!("SSH key authentication failed with key: {}", key_path))?;
-        } else {
-            // Try default SSH key locations
-            let home = std::env::var("HOME").unwrap_or_else(|_| "/root".to_string());
-            let default_keys = [
-                format!("{}/.ssh/id_rsa", home),
-                format!("{}/.ssh/id_ed25519", home),
-            ];
-
-            let mut authenticated = false;
-            for key_path in &default_keys {
-                if Path::new(key_path).exists() {
-                    if session.userauth_pubkey_file(user, None, Path::new(key_path), None).is_ok() {
-                        authenticated = true;
-                        break;
-                    }
-                }
-            }
-
-            if !authenticated {
-                return Err(anyhow::anyhow!("SSH authentication failed. No valid key found."));
-            }
-        }
-
-        if !session.authenticated() {
-            return Err(anyhow::anyhow!("SSH authentication failed"));
-        }
-
-        Ok(RemoteExecutor { session })
+        Ok(RemoteExecutor {
+            server: server.clone(),
+            ssh_key: ssh_key_path.map(|s| s.to_string()),
+        })
     }
 
     /// Execute a command on the remote server
-    pub fn execute(&self, command: &str) -> Result<String> {
-        let mut channel = self.session.channel_session()
-            .context("Failed to open SSH channel")?;
+    pub async fn execute(&self, command: &str) -> Result<String> {
+        let ssh_host = self.server.ssh_host.as_ref()
+            .ok_or_else(|| anyhow!("No SSH host configured"))?;
 
-        channel.exec(command)
-            .context(format!("Failed to execute command: {}", command))?;
+        // Build SSH command
+        let mut ssh_cmd = Command::new("ssh");
+        ssh_cmd.arg("-o")
+            .arg("BatchMode=yes") // No interactive prompts
+            .arg("-o")
+            .arg("StrictHostKeyChecking=accept-new"); // Accept new host keys
 
-        // Read stdout
-        let mut output = String::new();
-        channel.read_to_string(&mut output)
-            .context("Failed to read command output")?;
+        // Add SSH key if specified
+        if let Some(key_path) = &self.ssh_key {
+            ssh_cmd.arg("-i").arg(key_path);
+        }
 
-        // Read stderr BEFORE closing the channel
-        let mut stderr = String::new();
-        channel.stderr().read_to_string(&mut stderr)
-            .context("Failed to read command stderr")?;
+        ssh_cmd.arg(ssh_host).arg(command);
 
-        // Now wait for channel to close
-        channel.wait_close()
-            .context("Failed to close channel")?;
+        // Add timeout to prevent SSH from hanging (2 minutes max)
+        let output = timeout(
+            Duration::from_secs(120),
+            ssh_cmd.output()
+        )
+        .await
+        .map_err(|_| anyhow!("SSH command timed out after 120s to {}", ssh_host))?
+        .map_err(|e| anyhow!("Failed to SSH to {}: {}", ssh_host, e))?;
 
-        // Get exit status
-        let exit_status = channel.exit_status()
-            .context("Failed to get exit status")?;
-
-        if exit_status != 0 {
-            return Err(anyhow::anyhow!(
+        if !output.status.success() {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            return Err(anyhow!(
                 "Command failed with exit code {}: {}\nStderr: {}",
-                exit_status,
+                output.status.code().unwrap_or(-1),
                 command,
                 stderr
             ));
         }
 
-        Ok(output)
+        let stdout = String::from_utf8_lossy(&output.stdout).to_string();
+        Ok(stdout)
     }
 }

@@ -335,12 +335,7 @@ async fn run_cleanup_for_server(
         cleanup::analyze_cleanup(&docker).await?
     } else {
         // Remote: Use SSH + Docker CLI
-        let executor = tokio::task::spawn_blocking({
-            let server = server.clone();
-            let ssh_key = ssh_key.map(|s| s.to_string());
-            move || executor::RemoteExecutor::new(&server, ssh_key.as_deref())
-        }).await??;
-
+        let executor = executor::RemoteExecutor::new(&server, ssh_key)?;
         remote_cleanup::analyze_cleanup_remote(&executor, &server.name).await?
     };
 
