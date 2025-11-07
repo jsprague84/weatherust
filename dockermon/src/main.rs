@@ -501,11 +501,8 @@ async fn run_cleanup_for_server(
             actions.push(
                 NtfyAction::http_post(
                     "Safe Cleanup",
-                    &format!("{}/webhook/cleanup/safe", webhook_url)
+                    &format!("{}/webhook/cleanup/safe?token={}", webhook_url, webhook_secret)
                 )
-                .with_headers(serde_json::json!({
-                    "Authorization": format!("Bearer {}", webhook_secret)
-                }))
             );
         }
 
@@ -514,11 +511,8 @@ async fn run_cleanup_for_server(
             actions.push(
                 NtfyAction::http_post(
                     "Prune Unused Images",
-                    &format!("{}/webhook/cleanup/images/prune-unused", webhook_url)
+                    &format!("{}/webhook/cleanup/images/prune-unused?token={}", webhook_url, webhook_secret)
                 )
-                .with_headers(serde_json::json!({
-                    "Authorization": format!("Bearer {}", webhook_secret)
-                }))
             );
         }
 
