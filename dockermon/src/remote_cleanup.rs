@@ -32,7 +32,8 @@ pub async fn analyze_cleanup_remote(
 
 async fn analyze_dangling_images_remote(executor: &RemoteExecutor) -> Result<ImageStats> {
     // List dangling images using Docker CLI
-    let output = executor.execute("docker image ls --filter dangling=true --format '{{json .}}'").await?;
+    // Use double quotes for format to avoid shell quoting issues over SSH
+    let output = executor.execute(r#"docker image ls --filter dangling=true --format "{{json .}}""#).await?;
 
     let mut stats = ImageStats::default();
 
@@ -70,7 +71,8 @@ async fn analyze_unused_images_remote(executor: &RemoteExecutor) -> Result<Image
 }
 
 async fn analyze_unused_networks_remote(executor: &RemoteExecutor) -> Result<NetworkStats> {
-    let output = executor.execute("docker network ls --format '{{json .}}'").await?;
+    // Use double quotes for format to avoid shell quoting issues over SSH
+    let output = executor.execute(r#"docker network ls --format "{{json .}}""#).await?;
 
     let mut stats = NetworkStats::default();
 
@@ -88,7 +90,8 @@ async fn analyze_unused_networks_remote(executor: &RemoteExecutor) -> Result<Net
         }
 
         // Check if network has containers (requires inspect)
-        let inspect_cmd = format!("docker network inspect {} --format '{{{{json .Containers}}}}'", name);
+        // Use double quotes for format to avoid shell quoting issues over SSH
+        let inspect_cmd = format!(r#"docker network inspect {} --format "{{{{json .Containers}}}}""#, name);
         let containers_json = executor.execute(&inspect_cmd).await.unwrap_or_else(|_| "{}".to_string());
 
         // If containers is empty object, network is unused
