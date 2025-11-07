@@ -352,6 +352,8 @@ impl Server {
     /// Format: "name:user@host" or "user@host" (name derived from host)
     /// Special: "name:local" or "name:localhost" creates a localhost server with custom name
     pub fn parse(input: &str) -> Result<Self> {
+        // Trim all whitespace including newlines
+        let input = input.trim();
         let parts: Vec<&str> = input.split(':').collect();
 
         match parts.len() {

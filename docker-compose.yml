@@ -55,6 +55,7 @@ services:
       - .env
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock:ro
+      - ${HOME}/.ssh:/root/.ssh:ro
     entrypoint: ["/bin/sh", "-c", "sleep infinity"]
     restart: unless-stopped
 
