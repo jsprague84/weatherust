@@ -56,6 +56,10 @@ enum Commands {
         #[arg(long, default_value_t = false)]
         prune_unused_images: bool,
 
+        /// Cleanup profile: conservative (default), moderate, or aggressive
+        #[arg(long, default_value = "conservative")]
+        profile: String,
+
         /// Comma-separated list of servers (name:user@host or just user@host)
         #[arg(long)]
         servers: Option<String>,
@@ -89,10 +93,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             quiet,
             execute_safe,
             prune_unused_images,
+            profile,
             servers,
             local,
             ssh_key,
-        } => run_cleanup(quiet, execute_safe, prune_unused_images, servers, local, ssh_key).await,
+        } => run_cleanup(quiet, execute_safe, prune_unused_images, profile, servers, local, ssh_key).await,
     }
 }
 
@@ -265,6 +270,7 @@ async fn run_cleanup(
     quiet: bool,
     execute_safe: bool,
     prune_unused_images: bool,
+    profile: String,
     servers_arg: Option<String>,
     _local: bool,
     ssh_key_arg: Option<String>,
@@ -295,7 +301,7 @@ async fn run_cleanup(
             println!("Analyzing {}...", server.name);
         }
 
-        match run_cleanup_for_server(server, execute_safe, prune_unused_images, quiet, ssh_key.as_deref()).await {
+        match run_cleanup_for_server(server, execute_safe, prune_unused_images, &profile, quiet, ssh_key.as_deref()).await {
             Ok(_) => {},
             Err(e) => {
                 eprintln!("Error running cleanup on {}: {}", server.name, e);
@@ -318,6 +324,7 @@ async fn run_cleanup_for_server(
     server: &Server,
     execute_safe: bool,
     prune_unused_images: bool,
+    profile_str: &str,
     quiet: bool,
     ssh_key: Option<&str>,
 ) -> Result<(), Box<dyn std::error::Error>> {
@@ -354,9 +361,15 @@ async fn run_cleanup_for_server(
         // Cleanup execution requires local Docker connection
         let docker = bollard::Docker::connect_with_unix_defaults()?;
 
+        // Parse cleanup profile
+        let profile = cleanup::profiles::CleanupProfile::from_str(profile_str)
+            .unwrap_or(cleanup::profiles::CleanupProfile::Conservative);
+
         if execute_safe {
-            let result = cleanup::execute_safe_cleanup(&docker).await?;
+            // Use profile-based cleanup
+            let result = cleanup::profiles::execute_cleanup_with_profile(&docker, profile).await?;
             let mut parts = Vec::new();
+
             if result.dangling_images_removed > 0 {
                 parts.push(format!("{} dangling images", result.dangling_images_removed));
             }
@@ -369,9 +382,13 @@ async fn run_cleanup_for_server(
             if result.stopped_containers_removed > 0 {
                 parts.push(format!("{} stopped containers", result.stopped_containers_removed));
             }
+            if result.unused_images_removed > 0 {
+                parts.push(format!("{} unused images", result.unused_images_removed));
+            }
 
             execution_summary.push(format!(
-                "Safe cleanup: {} removed | {} reclaimed",
+                "{:?} cleanup: {} removed | {} reclaimed",
+                profile,
                 parts.join(" + "),
                 cleanup::format_bytes(result.space_reclaimed_bytes)
             ));
@@ -484,6 +501,40 @@ async fn run_cleanup_for_server(
                 item.status,
                 cleanup::format_bytes(item.size_bytes)
             ));
+        }
+        lines.push("".to_string());
+    }
+
+    // Layer analysis
+    if !report.layer_analysis.shared_layers.is_empty() {
+        lines.push(format!(
+            "Layer Analysis: {} shared layers ({}% efficiency)",
+            report.layer_analysis.shared_layers.len(),
+            report.layer_analysis.efficiency_percent as i32
+        ));
+        lines.push(format!(
+            "  • Shared: {} | Unique: {}",
+            cleanup::format_bytes(report.layer_analysis.total_shared_bytes),
+            cleanup::format_bytes(report.layer_analysis.total_unique_bytes)
+        ));
+
+        // Show top 3 most shared layers
+        for layer in report.layer_analysis.shared_layers.iter().take(3) {
+            lines.push(format!(
+                "  • {} ({}) - shared by {} images",
+                layer.layer_id,
+                cleanup::format_bytes(layer.size_bytes),
+                layer.shared_by_count
+            ));
+            if layer.images_using.len() <= 3 {
+                lines.push(format!("    {}", layer.images_using.join(", ")));
+            } else {
+                lines.push(format!(
+                    "    {}, and {} more",
+                    layer.images_using.iter().take(2).cloned().collect::<Vec<_>>().join(", "),
+                    layer.images_using.len() - 2
+                ));
+            }
         }
         lines.push("".to_string());
     }
