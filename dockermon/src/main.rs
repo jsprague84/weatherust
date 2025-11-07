@@ -346,61 +346,92 @@ async fn run_cleanup_for_server(
         remote_cleanup::analyze_cleanup_remote(&executor, &server.name).await?
     };
 
-    // Execute cleanup if requested (only for local servers)
+    // Execute cleanup if requested (both local and remote)
     let mut execution_summary = Vec::new();
 
-    if execute_safe && !server.is_local() {
-        return Err(format!("Cleanup execution not supported for remote servers. Analysis only for {}", server.name).into());
-    }
-
-    if prune_unused_images && !server.is_local() {
-        return Err(format!("Cleanup execution not supported for remote servers. Analysis only for {}", server.name).into());
-    }
-
     if execute_safe || prune_unused_images {
-        // Cleanup execution requires local Docker connection
-        let docker = bollard::Docker::connect_with_unix_defaults()?;
-
         // Parse cleanup profile
         let profile = cleanup::profiles::CleanupProfile::from_str(profile_str)
             .unwrap_or(cleanup::profiles::CleanupProfile::Conservative);
 
-        if execute_safe {
-            // Use profile-based cleanup
-            let result = cleanup::profiles::execute_cleanup_with_profile(&docker, profile).await?;
-            let mut parts = Vec::new();
+        if server.is_local() {
+            // Local: Use Bollard
+            let docker = bollard::Docker::connect_with_unix_defaults()?;
 
-            if result.dangling_images_removed > 0 {
-                parts.push(format!("{} dangling images", result.dangling_images_removed));
-            }
-            if result.networks_removed > 0 {
-                parts.push(format!("{} unused networks", result.networks_removed));
-            }
-            if result.build_cache_reclaimed > 0 {
-                parts.push(format!("{} build cache", cleanup::format_bytes(result.build_cache_reclaimed)));
-            }
-            if result.stopped_containers_removed > 0 {
-                parts.push(format!("{} stopped containers", result.stopped_containers_removed));
-            }
-            if result.unused_images_removed > 0 {
-                parts.push(format!("{} unused images", result.unused_images_removed));
+            if execute_safe {
+                // Use profile-based cleanup
+                let result = cleanup::profiles::execute_cleanup_with_profile(&docker, profile).await?;
+                let mut parts = Vec::new();
+
+                if result.dangling_images_removed > 0 {
+                    parts.push(format!("{} dangling images", result.dangling_images_removed));
+                }
+                if result.networks_removed > 0 {
+                    parts.push(format!("{} unused networks", result.networks_removed));
+                }
+                if result.build_cache_reclaimed > 0 {
+                    parts.push(format!("{} build cache", cleanup::format_bytes(result.build_cache_reclaimed)));
+                }
+                if result.stopped_containers_removed > 0 {
+                    parts.push(format!("{} stopped containers", result.stopped_containers_removed));
+                }
+                if result.unused_images_removed > 0 {
+                    parts.push(format!("{} unused images", result.unused_images_removed));
+                }
+
+                execution_summary.push(format!(
+                    "{:?} cleanup: {} removed | {} reclaimed",
+                    profile,
+                    parts.join(" + "),
+                    cleanup::format_bytes(result.space_reclaimed_bytes)
+                ));
             }
 
-            execution_summary.push(format!(
-                "{:?} cleanup: {} removed | {} reclaimed",
-                profile,
-                parts.join(" + "),
-                cleanup::format_bytes(result.space_reclaimed_bytes)
-            ));
-        }
+            if prune_unused_images {
+                let result = cleanup::execute_unused_image_cleanup(&docker).await?;
+                execution_summary.push(format!(
+                    "Unused images: {} removed ({})",
+                    result.unused_images_removed,
+                    cleanup::format_bytes(result.space_reclaimed_bytes)
+                ));
+            }
+        } else {
+            // Remote: Use SSH + Docker CLI
+            let executor = executor::RemoteExecutor::new(server.clone(), ssh_key)?;
 
-        if prune_unused_images {
-            let result = cleanup::execute_unused_image_cleanup(&docker).await?;
-            execution_summary.push(format!(
-                "Unused images: {} removed ({})",
-                result.unused_images_removed,
-                cleanup::format_bytes(result.space_reclaimed_bytes)
-            ));
+            if execute_safe {
+                // Use profile-based remote cleanup
+                let result = remote_cleanup::execute_cleanup_with_profile_remote(&executor, profile).await?;
+                let mut parts = Vec::new();
+
+                if result.dangling_images_removed > 0 {
+                    parts.push(format!("{} dangling images", result.dangling_images_removed));
+                }
+                if result.networks_removed > 0 {
+                    parts.push(format!("{} unused networks", result.networks_removed));
+                }
+                if result.build_cache_reclaimed > 0 {
+                    parts.push(format!("{} build cache", cleanup::format_bytes(result.build_cache_reclaimed)));
+                }
+                if result.stopped_containers_removed > 0 {
+                    parts.push(format!("{} stopped containers", result.stopped_containers_removed));
+                }
+                if result.unused_images_removed > 0 {
+                    parts.push(format!("{} unused images", result.unused_images_removed));
+                }
+
+                execution_summary.push(format!(
+                    "{:?} cleanup: {} removed | {} reclaimed",
+                    profile,
+                    parts.join(" + "),
+                    cleanup::format_bytes(result.space_reclaimed_bytes)
+                ));
+            }
+
+            if prune_unused_images {
+                // Not implemented for remote yet - would need to add execute_unused_image_cleanup_remote
+                return Err("Prune unused images flag not yet supported for remote servers. Use --profile moderate or aggressive instead.".into());
+            }
         }
     }
 
