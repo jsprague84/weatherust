@@ -1,8 +1,10 @@
 pub mod types;
+pub mod profiles;
 mod images;
 mod networks;
 mod build_cache;
 mod containers;
+mod layers;
 mod logs;
 mod volumes;
 
@@ -12,6 +14,7 @@ pub use types::{
     NetworkStats, NetworkInfo,
     BuildCacheStats, BuildCacheItem,
     ContainerStats, ContainerInfo,
+    LayerAnalysis, SharedLayer,
     LogStats, VolumeStats
 };
 
@@ -34,6 +37,9 @@ pub async fn analyze_cleanup(docker: &Docker) -> Result<CleanupReport> {
 
     // Analyze stopped containers
     report.stopped_containers = containers::analyze_stopped_containers(docker).await?;
+
+    // Analyze image layers and sharing
+    report.layer_analysis = layers::analyze_layers(docker).await?;
 
     // Analyze container logs
     report.large_logs = logs::analyze_large_logs(docker).await?;

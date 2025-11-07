@@ -1,6 +1,7 @@
 use crate::cleanup::{
     CleanupReport, ImageStats, ImageInfo, NetworkStats, NetworkInfo,
     BuildCacheStats, BuildCacheItem, ContainerStats, ContainerInfo,
+    LayerAnalysis,
     LogStats, VolumeStats
 };
 use crate::executor::RemoteExecutor;
@@ -28,6 +29,9 @@ pub async fn analyze_cleanup_remote(
 
     // Analyze stopped containers
     report.stopped_containers = analyze_stopped_containers_remote(executor).await?;
+
+    // Note: Layer analysis via CLI is complex - skip for remote servers
+    report.layer_analysis = LayerAnalysis::default();
 
     // Note: Large logs and volumes analysis requires more complex logic
     // For now, set to default (empty)

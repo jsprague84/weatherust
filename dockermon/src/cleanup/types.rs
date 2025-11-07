@@ -9,6 +9,7 @@ pub struct CleanupReport {
     pub unused_networks: NetworkStats,
     pub build_cache: BuildCacheStats,
     pub stopped_containers: ContainerStats,
+    pub layer_analysis: LayerAnalysis,
     pub large_logs: LogStats,
     pub volumes: VolumeStats,
     pub total_reclaimable_bytes: u64,
@@ -23,6 +24,7 @@ impl CleanupReport {
             unused_networks: NetworkStats::default(),
             build_cache: BuildCacheStats::default(),
             stopped_containers: ContainerStats::default(),
+            layer_analysis: LayerAnalysis::default(),
             large_logs: LogStats::default(),
             volumes: VolumeStats::default(),
             total_reclaimable_bytes: 0,
@@ -117,6 +119,25 @@ pub struct VolumeInfo {
     pub size_bytes: u64,
     pub created_timestamp: i64,
     pub containers_using: Vec<String>,
+}
+
+/// Statistics about image layers and sharing
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct LayerAnalysis {
+    pub shared_layers: Vec<SharedLayer>,
+    pub total_shared_bytes: u64,
+    pub total_unique_bytes: u64,
+    pub efficiency_percent: f64, // How much space is saved by layer sharing
+}
+
+/// Information about a layer shared between multiple images
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SharedLayer {
+    pub layer_id: String,
+    pub size_bytes: u64,
+    pub shared_by_count: usize,
+    pub images_using: Vec<String>, // Image names using this layer
+    pub created_timestamp: i64,
 }
 
 /// Statistics about Docker build cache
