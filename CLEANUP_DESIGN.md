@@ -1,25 +1,33 @@
 # Docker Cleanup Feature Design
 
+> **Note:** This document describes the Docker cleanup feature that was originally planned for `dockermon` but was later moved to `updatectl` as part of an architectural refactoring. As of the refactoring:
+> - `healthmon` (formerly `dockermon`) - Health monitoring only (read-only)
+> - `updatectl` - All system modifications including Docker cleanup, OS cleanup, OS updates, Docker updates
+
 ## Overview
-Add cleanup reporting and execution capabilities to `dockermon` to identify and optionally remove unused Docker resources (images, networks, logs). **Volume deletion is explicitly excluded** - volumes will only be reported for informational purposes.
+Docker cleanup capabilities in `updatectl` identify and optionally remove unused Docker resources (images, networks, build cache, old containers). **Volume deletion is explicitly excluded** - volumes will only be reported for informational purposes.
 
 ---
 
 ## Architecture
 
-### Module Structure
+### Module Structure (Implemented in updatectl)
 ```
-dockermon/
+updatectl/
 ├── src/
-│   ├── main.rs              // CLI entry point with subcommands
-│   ├── health.rs            // Existing health check logic (extracted)
-│   └── cleanup/
-│       ├── mod.rs           // Public API and orchestration
-│       ├── types.rs         // Shared data structures
-│       ├── images.rs        // Image analysis and pruning
-│       ├── networks.rs      // Network analysis and pruning
-│       ├── logs.rs          // Log size analysis and recommendations
-│       └── volumes.rs       // Volume reporting (read-only, no deletion)
+│   ├── main.rs              // CLI entry point with all subcommands
+│   ├── cleanup/             // Docker cleanup module
+│   │   ├── mod.rs           // Public API and orchestration
+│   │   ├── types.rs         // Shared data structures
+│   │   ├── images.rs        // Image analysis and pruning
+│   │   ├── networks.rs      // Network analysis and pruning
+│   │   ├── containers.rs    // Stopped container analysis
+│   │   ├── build_cache.rs   // Build cache analysis
+│   │   ├── layers.rs        // Image layer sharing analysis
+│   │   ├── logs.rs          // Log size analysis (read-only)
+│   │   ├── volumes.rs       // Volume reporting (read-only, no deletion)
+│   │   └── profiles.rs      // Cleanup profiles (conservative/moderate/aggressive)
+│   └── remote_cleanup.rs    // Remote cleanup via SSH
 ```
 
 ### Separation of Concerns
@@ -101,44 +109,37 @@ pub struct VolumeInfo {
 
 ---
 
-## CLI Interface
+## CLI Interface (As Implemented in updatectl)
 
-### Backward Compatible
+### Health Monitoring (healthmon)
 ```bash
-# Existing health check (no changes)
-dockermon
-dockermon --quiet
-dockermon --cpu-warn-pct 90
+# Health check only - no cleanup functionality
+healthmon health
+healthmon health --quiet
+healthmon health --cpu-warn-pct 90
 ```
 
-### New Cleanup Commands
+### Docker Cleanup Commands (updatectl)
 ```bash
-# Full cleanup report (all categories)
-dockermon cleanup
+# Full cleanup report (analysis only, default)
+updatectl clean-docker --local
+updatectl clean-docker --servers "server1,server2"
 
-# Category-specific reports
-dockermon cleanup --images
-dockermon cleanup --networks
-dockermon cleanup --logs
-dockermon cleanup --volumes
-
-# Execution modes
-dockermon cleanup --report          # Report only (default, read-only)
-dockermon cleanup --safe            # Execute safe operations (dangling images, unused networks)
-dockermon cleanup --interactive     # Prompt before each action
-dockermon cleanup --dry-run         # Show what would be deleted
+# Execute cleanup with profiles
+updatectl clean-docker --local --execute --profile conservative  # Safe: dangling images + unused networks
+updatectl clean-docker --local --execute --profile moderate      # + build cache
+updatectl clean-docker --local --execute --profile aggressive    # + old stopped containers (30 days)
 
 # Output control
-dockermon cleanup --quiet           # Send to notifications only
-dockermon cleanup --json            # JSON output for scripting
+updatectl clean-docker --local --quiet           # Send to notifications only
 ```
 
-### CLI Arguments
+### CLI Arguments (As Implemented)
 ```rust
+// healthmon (health monitoring only)
 #[derive(Parser, Debug)]
-#[command(name = "dockermon")]
+#[command(name = "healthmon")]
 enum Commands {
-    /// Check container health and resource usage (default)
     Health {
         #[arg(long)]
         quiet: bool,
@@ -151,166 +152,130 @@ enum Commands {
         #[arg(long, value_delimiter = ',')]
         ignore: Vec<String>,
     },
+}
 
-    /// Analyze and clean up Docker resources
-    Cleanup {
-        /// Show report without taking action
-        #[arg(long, default_value_t = true)]
-        report: bool,
+// updatectl (includes cleanup + updates)
+#[derive(Parser, Debug)]
+#[command(name = "updatectl")]
+enum Commands {
+    /// Update OS packages
+    Os { /* ... */ },
 
-        /// Execute safe cleanup operations automatically
+    /// Update Docker images
+    Docker { /* ... */ },
+
+    /// Update both OS and Docker
+    All { /* ... */ },
+
+    /// Clean Docker resources (images, networks, containers, build cache)
+    CleanDocker {
+        /// Cleanup profile: conservative (default), moderate, or aggressive
+        #[arg(long, default_value = "conservative")]
+        profile: String,
+
+        /// Actually execute cleanup (default is analysis only)
         #[arg(long)]
-        safe: bool,
+        execute: bool,
 
-        /// Prompt before each action
-        #[arg(long)]
-        interactive: bool,
+        // ... server targeting flags (--local, --servers)
+    },
 
-        /// Show what would be deleted without doing it
+    /// Clean OS resources (package cache, old kernels, etc.)
+    CleanOs {
+        /// Clean package manager cache (apt clean, dnf clean)
         #[arg(long)]
-        dry_run: bool,
+        cache: bool,
 
-        /// Only analyze images
+        /// Remove unused packages (apt autoremove, dnf autoremove)
         #[arg(long)]
-        images: bool,
+        autoremove: bool,
 
-        /// Only analyze networks
+        /// Clean all (cache + autoremove)
         #[arg(long)]
-        networks: bool,
+        all: bool,
 
-        /// Only analyze logs
+        /// Actually execute cleanup (default is analysis only)
         #[arg(long)]
-        logs: bool,
+        execute: bool,
 
-        /// Only analyze volumes
-        #[arg(long)]
-        volumes: bool,
-
-        /// Suppress stdout output
-        #[arg(long)]
-        quiet: bool,
-
-        /// Output as JSON
-        #[arg(long)]
-        json: bool,
+        // ... server targeting flags
     },
 }
 ```
 
 ---
 
-## Notification Format
+## Notification Format (As Implemented)
 
-### Per-Server ntfy Notification
+Cleanup notifications are sent via the standard updatectl notification system:
+
+### Gotify Notification (cleanup report)
 ```
-Title: docker-vm - Cleanup Report
-Tags: house, warning (if issues), or checkmark (if clean)
+Title: 🧹 Docker Cleanup Report - docker-vm
 
 Message:
-🧹 Docker Cleanup Report
+📊 Analysis Results:
 
-📦 Dangling Images
-   Count: 3 images
-   Size: 523MB
-   Status: Safe to remove
+Dangling Images:
+  - Count: 3 images
+  - Size: 523MB
+  - Status: ✅ Safe to remove
 
-🖼️  Unused Images
-   Count: 5 images (nginx:1.20, redis:6.0, postgres:13, ...)
-   Size: 561MB
-   Last Used: 3+ months ago
-   Status: Review recommended
+Unused Networks:
+  - Count: 12 networks
+  - Status: ✅ Safe to remove
 
-🔗 Unused Networks
-   Count: 12 networks
-   Status: Safe to remove
+Build Cache:
+  - Size: 1.2GB
+  - Status: ⚠️  Moderate profile
 
-📝 Large Container Logs
-   Total Size: 3.2GB
-   Containers Over 1GB: 2
-   - postgres_main: 1.8GB
-   - app_backend: 1.5GB
+Stopped Containers:
+  - Count: 5 containers (>30 days old)
+  - Status: ⚠️  Aggressive profile only
 
-   Recommendation: Add to docker-compose.yml:
-   logging:
-     driver: json-file
-     options:
-       max-size: "50m"
-       max-file: "3"
+Total Reclaimable:
+  - Conservative: 523MB (dangling images + unused networks)
+  - Moderate: 1.7GB (+ build cache)
+  - Aggressive: 1.75GB (+ old containers)
 
-💾 Volumes (informational)
-   Count: 15 volumes
-   Total Size: 45GB
-   Largest:
-   - postgres_data: 12GB (in use)
-   - old_backup_vol: 8GB (unused 180+ days) ⚠️
-   - redis_data: 5GB (in use)
-
-✅ Total Reclaimable Space: ~1.08GB
-   (Dangling images + unused networks)
-
-Action Buttons:
-[Prune Safe Items] [View Details]
+To execute cleanup:
+  updatectl clean-docker --local --execute --profile conservative
 ```
 
-### Summary Gotify Notification (All Servers)
+### Gotify Notification (cleanup execution results)
 ```
-Title: 🧹 Docker Cleanup Summary (3 servers)
+Title: ✅ Docker Cleanup Complete - docker-vm
 
 Message:
-Overview:
-  docker-vm: 1.08GB reclaimable, 3.2GB logs need rotation
-  Cloud VM1: 450MB reclaimable, 890MB logs need rotation
-  Cloud VM2: 2.3GB reclaimable, 5.1GB logs need rotation
+Profile: Conservative
+Removed: 28 items
+Reclaimed: 541MB
 
-Totals Across All Servers:
-  Dangling Images: 1.2GB (8 images)
-  Unused Images: 2.58GB (14 images)
-  Unused Networks: 31 networks
-  Large Logs: 9.19GB (7 containers without rotation)
-  Volumes: 47 volumes (142GB) - manual review needed
-
-Total Reclaimable: 3.78GB
-
-Next Steps:
-  - Review per-server details in ntfy
-  - Run cleanup with --safe flag
-  - Configure log rotation for large containers
-  - Audit unused volumes manually
+Details:
+  - Dangling images pruned: 3 (523MB)
+  - Unused networks removed: 12
+  - Build cache cleared: 0MB (not included in conservative profile)
 ```
 
 ---
 
-## Webhook Actions
+## Webhook Actions (Planned - Not Yet Implemented)
 
-### Safe Cleanup Endpoint
+> **Note:** Webhook integration for cleanup actions is planned but not yet implemented. Currently cleanup must be triggered manually via CLI or Ofelia schedules.
+
+### Future: Safe Cleanup Endpoint
 ```
 POST /webhook/cleanup/safe?server=<name>&token=<secret>
 
-Actions:
+Actions (would use conservative profile):
   - Prune dangling images
   - Prune unused networks
   - Do NOT touch volumes
-  - Do NOT touch unused images (require explicit confirmation)
+  - Do NOT touch build cache
+  - Do NOT touch stopped containers
 
 Response: 202 Accepted
 Background task sends completion notification with results
-```
-
-### ~~Configure Log Rotation Endpoint~~ (REMOVED)
-Log rotation configuration is manual only. The cleanup report provides
-docker-compose.yml snippets as recommendations, but no automatic configuration
-or webhooks are provided for log rotation.
-
-### Prune Unused Images Endpoint (Dangerous)
-```
-POST /webhook/cleanup/images/prune-unused?server=<name>&token=<secret>
-
-Actions:
-  - Prune images with no containers using them
-  - Exclude images from last 7 days
-  - Requires explicit webhook call (not in "safe" category)
-
-Response: 202 Accepted
 ```
 
 ---
@@ -339,26 +304,32 @@ DOCKERMON_CLEANUP_LOG_SIZE_CONTAINER=100M  # Per-container log threshold
 
 ---
 
-## Configuration
+## Configuration (As Implemented)
 
 ### Environment Variables
+Cleanup functionality uses the same server configuration as other updatectl commands:
 ```bash
-# Cleanup thresholds
-DOCKERMON_CLEANUP_IMAGE_SIZE_WARN=500M
-DOCKERMON_CLEANUP_LOG_SIZE_WARN=1G
-DOCKERMON_CLEANUP_LOG_SIZE_CONTAINER=100M
-DOCKERMON_CLEANUP_IMAGE_AGE_DAYS=90        # Unused images older than this flagged
+# Server list for remote cleanup
+UPDATE_SERVERS=docker-vm:local,Cloud VM1:ubuntu@cloud-vm1.js-node.com
+UPDATE_SSH_KEY=/home/ubuntu/.ssh/id_ed25519
 
-# Auto-cleanup schedule (via Ofelia)
-# Run cleanup report weekly (Sundays at 2 AM)
-ofelia.job-exec.dockermon-cleanup.schedule=0 0 2 * * 0
-ofelia.job-exec.dockermon-cleanup.container=dockermon_runner
-ofelia.job-exec.dockermon-cleanup.command=/app/dockermon cleanup --quiet
+# Notification keys
+UPDATECTL_GOTIFY_KEY=your_updatectl_token
+UPDATECTL_NTFY_TOPIC=update-actions
+```
 
-# Safe auto-cleanup monthly (first of month at 3 AM)
-# ofelia.job-exec.dockermon-cleanup-safe.schedule=0 0 3 1 * *
-# ofelia.job-exec.dockermon-cleanup-safe.container=dockermon_runner
-# ofelia.job-exec.dockermon-cleanup-safe.command=/app/dockermon cleanup --safe --quiet
+### Ofelia Schedules (docker-compose.yml)
+```yaml
+# Weekly cleanup report (Sundays at 2:00 AM) - analysis only
+- "ofelia.job-exec.docker-cleanup-report.schedule=0 0 2 * * 0"
+- "ofelia.job-exec.docker-cleanup-report.container=updatectl_runner"
+- "ofelia.job-exec.docker-cleanup-report.command=/app/updatectl clean-docker --local --quiet"
+
+# OPTIONAL: Monthly safe auto-cleanup (DISABLED by default)
+# Uncomment to enable automated cleanup with conservative profile
+# - "ofelia.job-exec.docker-cleanup-safe.schedule=0 30 2 1 * *"
+# - "ofelia.job-exec.docker-cleanup-safe.container=updatectl_runner"
+# - "ofelia.job-exec.docker-cleanup-safe.command=/app/updatectl clean-docker --local --quiet --execute --profile conservative"
 ```
 
 ---
@@ -397,42 +368,46 @@ ofelia.job-exec.dockermon-cleanup.command=/app/dockermon cleanup --quiet
 
 ---
 
-## Example Workflows
+## Example Workflows (As Implemented)
 
 ### Weekly Automated Report
 ```yaml
-# Ofelia schedule in docker-compose.yml
-ofelia.job-exec.dockermon-cleanup.schedule=0 0 2 * * 0
-ofelia.job-exec.dockermon-cleanup.container=dockermon_runner
-ofelia.job-exec.dockermon-cleanup.command=/app/dockermon cleanup --quiet
+# Ofelia schedule in docker-compose.yml (enabled by default)
+ofelia.job-exec.docker-cleanup-report.schedule=0 0 2 * * 0
+ofelia.job-exec.docker-cleanup-report.container=updatectl_runner
+ofelia.job-exec.docker-cleanup-report.command=/app/updatectl clean-docker --local --quiet
 ```
 
-User receives:
-1. Per-server ntfy notifications with details
-2. Summary Gotify with all servers
-3. Action buttons to execute safe cleanup
+User receives Gotify notification with analysis results and instructions for manual execution.
 
-### Monthly Automated Safe Cleanup
+### Monthly Automated Safe Cleanup (Optional - Disabled by Default)
 ```yaml
-# Run safe cleanup on first of month
-ofelia.job-exec.dockermon-safe-cleanup.schedule=0 0 3 1 * *
-ofelia.job-exec.dockermon-safe-cleanup.container=dockermon_runner
-ofelia.job-exec.dockermon-safe-cleanup.command=/app/dockermon cleanup --safe --quiet
+# Uncomment in docker-compose.yml to enable
+# ofelia.job-exec.docker-cleanup-safe.schedule=0 30 2 1 * *
+# ofelia.job-exec.docker-cleanup-safe.container=updatectl_runner
+# ofelia.job-exec.docker-cleanup-safe.command=/app/updatectl clean-docker --local --quiet --execute --profile conservative
 ```
 
 User receives:
-1. Completion notification: "Cleaned 1.2GB on docker-vm"
-2. Summary of what was removed
+1. Completion notification: "✅ Docker Cleanup Complete - docker-vm"
+2. Summary of items removed and space reclaimed
 
-### Manual Interactive Cleanup
+### Manual Cleanup Execution
 ```bash
-# SSH into server
-docker compose exec dockermon_runner /app/dockermon cleanup --interactive
+# Analysis only (safe, default)
+updatectl clean-docker --local
 
-# Prompts for each action:
-# "Remove 3 dangling images (523MB)? [y/N]"
-# "Remove 12 unused networks? [y/N]"
-# "Remove unused image nginx:1.20 (142MB)? [y/N]"
+# Execute with conservative profile (safest)
+updatectl clean-docker --local --execute --profile conservative
+
+# Execute with moderate profile
+updatectl clean-docker --local --execute --profile moderate
+
+# Execute with aggressive profile
+updatectl clean-docker --local --execute --profile aggressive
+
+# Remote server cleanup
+updatectl clean-docker --servers "Cloud VM1" --execute --profile conservative
 ```
 
 ---
@@ -461,25 +436,31 @@ docker compose exec dockermon_runner /app/dockermon cleanup --interactive
 
 ---
 
-## Migration Path
+## Migration Path (Completed)
 
-### Backward Compatibility
-Existing `dockermon` usage remains unchanged:
-```bash
-dockermon              # Still runs health check
-dockermon --quiet      # Still works as before
-```
+### Architectural Refactoring
+The cleanup feature was moved from `dockermon` to `updatectl` during a major refactoring:
 
-New cleanup feature is opt-in via subcommand:
-```bash
-dockermon cleanup      # New cleanup functionality
-```
+**Before:**
+- `dockermon` - Health monitoring + cleanup
+
+**After:**
+- `healthmon` (renamed) - Health monitoring only (read-only)
+- `updatectl` - All system modifications (OS updates, Docker updates, Docker cleanup, OS cleanup)
+
+### Migration Steps Completed
+1. ✅ Renamed `dockermon` to `healthmon`
+2. ✅ Moved all cleanup code from healthmon to updatectl
+3. ✅ Added OS maintenance commands to updatectl
+4. ✅ Updated docker-compose.yml Ofelia jobs
+5. ✅ Updated notification functions in common library
+6. ✅ Updated environment variable names (`DOCKERMON_*` → `HEALTHMON_*`)
+7. ✅ Rebuilt and published all Docker images
 
 ### Deployment
-1. Update `dockermon` binary (backward compatible)
-2. Optionally add cleanup schedule to docker-compose.yml
-3. Optionally add cleanup webhook endpoints
-4. No config changes required for existing health checks
+1. Update to new images (healthmon, updatectl)
+2. Update .env file with new variable names
+3. Cleanup schedules now use updatectl instead of healthmon
 
 ---
 

@@ -105,7 +105,7 @@ GOTIFY_URL=https://gotify.example.com/message
 WEATHERUST_GOTIFY_KEY=your_weatherust_token
 UPDATEMON_GOTIFY_KEY=your_updatemon_token
 UPDATECTL_GOTIFY_KEY=your_updatectl_token
-DOCKERMON_GOTIFY_KEY=your_dockermon_token
+HEALTHMON_GOTIFY_KEY=your_healthmon_token
 SPEEDY_GOTIFY_KEY=your_speedynotify_token
 ```
 
@@ -132,7 +132,7 @@ NTFY_AUTH=your_ntfy_auth_token
 WEATHERUST_NTFY_TOPIC=weatherust
 UPDATEMON_NTFY_TOPIC=updates
 UPDATECTL_NTFY_TOPIC=update-actions
-DOCKERMON_NTFY_TOPIC=docker
+HEALTHMON_NTFY_TOPIC=docker-health
 SPEEDY_NTFY_TOPIC=speedtest
 ```
 
@@ -196,7 +196,7 @@ Environment defaults:
 
 This repo is now a Rust workspace with a shared helper crate. A second binary, `speedynotify`, runs the Ookla Speedtest CLI and sends notifications via Gotify and/or ntfy.sh.
 
-Added: `dockermon` — checks Docker containers for health issues and high CPU/MEM and sends notifications via Gotify and/or ntfy.sh. Designed for Ofelia to run every 5 minutes. It uses Ofelia's `env-file` label for reliable environment passing.
+Added: `healthmon` (renamed from `dockermon`) — checks Docker containers for health issues and high CPU/MEM and sends notifications via Gotify and/or ntfy.sh. Designed for Ofelia to run every 5 minutes. It uses Ofelia's `env-file` label for reliable environment passing.
 
 - Enable in compose:
   - Image: `ghcr.io/jsprague84/speedynotify:latest` (publish separately).
@@ -207,13 +207,13 @@ Added: `dockermon` — checks Docker containers for health issues and high CPU/M
 Build locally:
 - Weather: `docker build -t weatherust:local .`
 - Speedtest: `docker build -f Dockerfile.speedynotify -t speedynotify:local .`
- - Docker monitor: `docker build -f Dockerfile.dockermon -t dockermon:local .`
+- Health monitor: `docker build -f Dockerfile.healthmon -t healthmon:local .`
 
 Publish images (CI):
-- Weather image is built by `.github/workflows/docker.yml` -> `ghcr.io/<owner>/weatherust`.
-- Speedtest image is built by `.github/workflows/docker-speedynotify.yml` -> `ghcr.io/<owner>/speedynotify`.
- - Docker monitor image is built by `.github/workflows/docker-dockermon.yml` -> `ghcr.io/<owner>/dockermon`.
-- After first successful publish, make the GHCR package public in GitHub Packages so compose hosts can pull without auth.
+- All images are built by `.github/workflows/build-all-services.yml` in parallel
+- Images published: weatherust, speedynotify, healthmon, updatemon, updatectl
+- Push to `main` publishes `latest` tags, push tags like `v1.0.0` for versioned releases
+- After first successful publish, make the GHCR packages public in GitHub Packages so compose hosts can pull without auth.
 
 **Scaffolding New Features**
 
@@ -223,31 +223,33 @@ Publish images (CI):
   - A GitHub Action is generated at `.github/workflows/docker-<name>.yml` to publish `ghcr.io/<owner>/<name>`.
   - See `FEATURES.md` for details and the Ofelia label pattern to schedule your new image.
 
-**Docker Monitor (dockermon)**
+**Health Monitor (healthmon)**
+
+healthmon (formerly `dockermon`) monitors Docker container health and resource usage. After refactoring, **all Docker cleanup functionality has been moved to updatectl**.
 
 - Purpose: Alert when any container is not running, has failing health, or exceeds CPU/MEM thresholds.
 - Env:
   - `HEALTH_NOTIFY_ALWAYS` (default `false`) — notify even when all OK.
   - `CPU_WARN_PCT` (default `85`) — CPU percentage threshold.
   - `MEM_WARN_PCT` (default `90`) — memory percentage threshold.
-  - `DOCKERMON_GOTIFY_KEY` (optional) — Gotify token for this service.
-  - `DOCKERMON_NTFY_TOPIC` (optional) — ntfy.sh topic for this service.
+  - `HEALTHMON_GOTIFY_KEY` (optional) — Gotify token for this service.
+  - `HEALTHMON_NTFY_TOPIC` (optional) — ntfy.sh topic for this service.
   - `GOTIFY_DEBUG` / `NTFY_DEBUG` (optional) — set to `true`/`1` to print debug info in logs.
-  - `DOCKERMON_IGNORE` (optional) — comma-separated list of container names/IDs/service names to skip (case-insensitive).
+  - `HEALTHMON_IGNORE` (optional) — comma-separated list of container names/IDs/service names to skip (case-insensitive).
 - Compose integration:
   - Service mounts the Docker socket read-only.
-- Ofelia mounts the host `.env` inside the container at `/ofelia/.env`, and the job-run labels reference the host path (`env-file=${ENV_FILE_HOST_PATH}`) plus explicit `env=` entries so Docker loads the same values when starting one-off containers.
-- Job mounts the Docker socket via a single `volume` label.
-- Tag override: set `DOCKERMON_TAG` in `.env` for pre-merge testing.
+- Tag override: set `HEALTHMON_TAG` in `.env` for pre-merge testing.
 
 Runtime pattern (robust):
-- This compose keeps a lightweight `dockermon_runner` container (same image, entrypoint overridden to `sleep infinity`) alive so Ofelia can `job-exec` into it and automatically inherit the full `.env` plus socket mount. Use the `DOCKERMON_IGNORE` env (or `--ignore` CLI flag) to suppress noise from short-lived containers (e.g., the one-off weather/speedy jobs). Weather/speedy job-runs specify `env-file=${ENV_FILE_HOST_PATH}` and a compact `env=` list to guarantee keys arrive even if env-file parsing differs across Ofelia releases.
-  - `ofelia.job-exec.dockermon.container=dockermon_runner`
-  - `ofelia.job-exec.dockermon.command=/app/dockermon --quiet`
+- This compose keeps a lightweight `healthmon_runner` container (same image, entrypoint overridden to `sleep infinity`) alive so Ofelia can `job-exec` into it and automatically inherit the full `.env` plus socket mount. Use the `HEALTHMON_IGNORE` env (or `--ignore` CLI flag) to suppress noise from short-lived containers (e.g., the one-off weather/speedy jobs).
+  - `ofelia.job-exec.healthmon-health.container=healthmon_runner`
+  - `ofelia.job-exec.healthmon-health.command=/app/healthmon health --quiet`
+
+For Docker cleanup operations, see **updatectl** below.
 
 **Update Monitor (updatemon) & Update Controller (updatectl)**
 
-Two companion tools for managing updates across your infrastructure:
+Two companion tools for managing updates and cleanup across your infrastructure:
 
 **updatemon** - Multi-server update monitoring (read-only)
 - Checks OS packages (apt/dnf/pacman) and Docker images for available updates
@@ -257,8 +259,11 @@ Two companion tools for managing updates across your infrastructure:
 - Safe for automation - never modifies anything
 - [Full documentation](updatemon/README.md)
 
-**updatectl** - Multi-server update controller (applies updates)
-- Apply OS package updates and pull Docker images across servers
+**updatectl** - Multi-server update controller & cleanup tool (applies changes)
+- **OS Updates**: Apply package updates across servers (apt/dnf/pacman)
+- **Docker Updates**: Pull updated Docker images across servers
+- **Docker Cleanup**: Clean up dangling images, unused networks, old containers, build cache
+- **OS Cleanup**: Clean package cache and remove unused packages (apt clean/autoremove)
 - Server name resolution for easy CLI usage
 - Interactive confirmation prompts (skip with `--yes` for automation)
 - Dry-run mode to preview changes before applying
