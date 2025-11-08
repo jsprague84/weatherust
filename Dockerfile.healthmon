@@ -3,7 +3,7 @@ WORKDIR /app
 
 # Copy full workspace so Cargo can resolve all members reliably
 COPY . .
-RUN cargo build -p dockermon --release
+RUN cargo build -p healthmon --release
 
 FROM debian:12-slim AS runtime
 WORKDIR /app
@@ -13,7 +13,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     openssh-client \
     && rm -rf /var/lib/apt/lists/*
 
-COPY --from=builder /app/target/release/dockermon /app/dockermon
+COPY --from=builder /app/target/release/healthmon /app/healthmon
 
 ENV RUST_LOG=info
-ENTRYPOINT ["/app/dockermon"]
+ENTRYPOINT ["/app/healthmon"]

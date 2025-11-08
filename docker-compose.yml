@@ -13,8 +13,8 @@ services:
     restart: "no"
 
   # Docker monitor: checks container health and CPU/MEM thresholds
-  dockermon:
-    image: ghcr.io/jsprague84/dockermon:${DOCKERMON_TAG:-latest}
+  healthmon:
+    image: ghcr.io/jsprague84/healthmon:${HEALTHMON_TAG:-latest}
     env_file:
       - .env
     volumes:
@@ -48,9 +48,9 @@ services:
     entrypoint: ["/bin/sh", "-c", "sleep infinity"]
     restart: unless-stopped
 
-  dockermon_runner:
-    image: ghcr.io/jsprague84/dockermon:${DOCKERMON_TAG:-latest}
-    container_name: dockermon_runner
+  healthmon_runner:
+    image: ghcr.io/jsprague84/healthmon:${HEALTHMON_TAG:-latest}
+    container_name: healthmon_runner
     env_file:
       - .env
     volumes:
@@ -133,21 +133,21 @@ services:
       - "ofelia.job-exec.speedynotify.command=/app/speedynotify --quiet --min-down ${SPEEDTEST_MIN_DOWN} --min-up ${SPEEDTEST_MIN_UP}"
 
       # Docker health monitor every 5 minutes (exec inside runner to inherit env_file)
-      - "ofelia.job-exec.dockermon-health.schedule=0 */5 * * * *"
-      - "ofelia.job-exec.dockermon-health.container=dockermon_runner"
-      - "ofelia.job-exec.dockermon-health.command=/app/dockermon health --quiet"
+      - "ofelia.job-exec.healthmon-health.schedule=0 */5 * * * *"
+      - "ofelia.job-exec.healthmon-health.container=healthmon_runner"
+      - "ofelia.job-exec.healthmon-health.command=/app/healthmon health --quiet"
 
       # Docker cleanup analysis weekly (Sundays at 02:00)
-      - "ofelia.job-exec.dockermon-cleanup-report.schedule=0 0 2 * * 0"
-      - "ofelia.job-exec.dockermon-cleanup-report.container=dockermon_runner"
-      - "ofelia.job-exec.dockermon-cleanup-report.command=/app/dockermon cleanup --quiet"
+      - "ofelia.job-exec.healthmon-cleanup-report.schedule=0 0 2 * * 0"
+      - "ofelia.job-exec.healthmon-cleanup-report.container=healthmon_runner"
+      - "ofelia.job-exec.healthmon-cleanup-report.command=/app/healthmon cleanup --quiet"
 
       # Docker safe auto-cleanup - OPTIONAL (DISABLED by default)
       # CAUTION: Removes dangling images and unused networks automatically
       # Uncomment to enable monthly safe cleanup (1st of month at 02:30)
-      # - "ofelia.job-exec.dockermon-cleanup-safe.schedule=0 30 2 1 * *"
-      # - "ofelia.job-exec.dockermon-cleanup-safe.container=dockermon_runner"
-      # - "ofelia.job-exec.dockermon-cleanup-safe.command=/app/dockermon cleanup --quiet --execute-safe"
+      # - "ofelia.job-exec.healthmon-cleanup-safe.schedule=0 30 2 1 * *"
+      # - "ofelia.job-exec.healthmon-cleanup-safe.container=healthmon_runner"
+      # - "ofelia.job-exec.healthmon-cleanup-safe.command=/app/healthmon cleanup --quiet --execute-safe"
 
       # Update monitor daily at 03:00 (checks OS packages and Docker images)
       # NOTE: Add localhost to UPDATE_SERVERS (e.g., "docker-vm:local,...") to include it automatically

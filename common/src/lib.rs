@@ -50,6 +50,14 @@ pub async fn send_gotify_dockermon(
     send_gotify_with_key(client, title, body, "DOCKERMON_GOTIFY_KEY").await
 }
 
+pub async fn send_gotify_healthmon(
+    client: &Client,
+    title: &str,
+    body: &str,
+) -> Result<(), Box<dyn std::error::Error>> {
+    send_gotify_with_key(client, title, body, "HEALTHMON_GOTIFY_KEY").await
+}
+
 pub async fn send_gotify_speedynotify(
     client: &Client,
     title: &str,
@@ -230,6 +238,15 @@ pub async fn send_ntfy_dockermon(
     actions: Option<Vec<NtfyAction>>,
 ) -> Result<(), Box<dyn std::error::Error>> {
     send_ntfy_with_topic(client, title, body, "DOCKERMON_NTFY_TOPIC", actions).await
+}
+
+pub async fn send_ntfy_healthmon(
+    client: &Client,
+    title: &str,
+    body: &str,
+    actions: Option<Vec<NtfyAction>>,
+) -> Result<(), Box<dyn std::error::Error>> {
+    send_ntfy_with_topic(client, title, body, "HEALTHMON_NTFY_TOPIC", actions).await
 }
 
 pub async fn send_ntfy_speedynotify(

@@ -1,6 +1,6 @@
 use bollard::models::HealthStatusEnum;
 use clap::{Parser, Subcommand};
-use common::{dotenv_init, http_client, send_gotify_dockermon, send_ntfy_dockermon, NtfyAction, Server, parse_servers};
+use common::{dotenv_init, http_client, send_gotify_healthmon, send_ntfy_healthmon, NtfyAction, Server, parse_servers};
 use futures_util::StreamExt;
 use std::collections::HashSet;
 use std::env;
@@ -111,7 +111,7 @@ async fn run_health_check(
     let ignore_set = build_ignore_set(&ignore);
 
     // Allow a dockermon-specific Gotify token override
-    if let Ok(tok) = std::env::var("DOCKERMON_GOTIFY_KEY") {
+    if let Ok(tok) = std::env::var("HEALTHMON_GOTIFY_KEY") {
         if !tok.trim().is_empty() {
             std::env::set_var("GOTIFY_KEY", tok);
         }
@@ -254,11 +254,11 @@ async fn run_health_check(
     if notify_always || had_issues {
         let client = http_client();
         // Send to Gotify (if configured)
-        if let Err(e) = send_gotify_dockermon(&client, title, &body).await {
+        if let Err(e) = send_gotify_healthmon(&client, title, &body).await {
             eprintln!("Gotify send error: {e}");
         }
         // Send to ntfy.sh (if configured)
-        if let Err(e) = send_ntfy_dockermon(&client, title, &body, None).await {
+        if let Err(e) = send_ntfy_healthmon(&client, title, &body, None).await {
             eprintln!("ntfy send error: {e}");
         }
     }
@@ -311,8 +311,8 @@ async fn run_cleanup(
                 let title = format!("{} - Docker Cleanup: Error", server.name);
                 let message = format!("❌ Error: {}", e);
 
-                let _ = send_gotify_dockermon(&client, &title, &message).await;
-                let _ = send_ntfy_dockermon(&client, &title, &message, None).await;
+                let _ = send_gotify_healthmon(&client, &title, &message).await;
+                let _ = send_ntfy_healthmon(&client, &title, &message, None).await;
             }
         }
     }
@@ -329,7 +329,7 @@ async fn run_cleanup_for_server(
     ssh_key: Option<&str>,
 ) -> Result<(), Box<dyn std::error::Error>> {
     // Allow a dockermon-specific Gotify token override
-    if let Ok(tok) = std::env::var("DOCKERMON_GOTIFY_KEY") {
+    if let Ok(tok) = std::env::var("HEALTHMON_GOTIFY_KEY") {
         if !tok.trim().is_empty() {
             std::env::set_var("GOTIFY_KEY", tok);
         }
@@ -662,12 +662,12 @@ async fn run_cleanup_for_server(
     let client = http_client();
 
     // Send to Gotify (if configured) - full report
-    if let Err(e) = send_gotify_dockermon(&client, &title, &body).await {
+    if let Err(e) = send_gotify_healthmon(&client, &title, &body).await {
         eprintln!("Gotify send error: {e}");
     }
 
     // Send to ntfy.sh (if configured) - with action buttons
-    if let Err(e) = send_ntfy_dockermon(&client, &title, &body, ntfy_actions).await {
+    if let Err(e) = send_ntfy_healthmon(&client, &title, &body, ntfy_actions).await {
         eprintln!("ntfy send error: {e}");
     }
 
@@ -686,7 +686,7 @@ fn build_ignore_set(cli_patterns: &[String]) -> HashSet<String> {
             set.insert(trimmed.to_lowercase());
         }
     }
-    if let Ok(raw) = env::var("DOCKERMON_IGNORE") {
+    if let Ok(raw) = env::var("HEALTHMON_IGNORE") {
         for entry in raw.split(|c: char| c == ',' || c == '\n' || c.is_whitespace()) {
             let trimmed = entry.trim();
             if !trimmed.is_empty() {

@@ -7,7 +7,7 @@ edition = "2021"
 members = [
     "common",
     "speedynotify",
-    "dockermon",
+    "healthmon",
     "updatemon",
     "updatectl",
 ]

@@ -18,8 +18,8 @@ jobs:
         service:
           - name: weatherust
             dockerfile: Dockerfile
-          - name: dockermon
-            dockerfile: Dockerfile.dockermon
+          - name: healthmon
+            dockerfile: Dockerfile.healthmon
           - name: speedynotify
             dockerfile: Dockerfile.speedynotify
           - name: updatemon
