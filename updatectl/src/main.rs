@@ -460,8 +460,8 @@ async fn clean_os(
     if do_cache {
         if execute && !dry_run {
             let output = executor.execute_command(
-                &format!("/usr/bin/{}", pm_binary),
-                &["clean", "all"]
+                "/usr/bin/sudo",
+                &[pm_binary, "clean", "all"]
             ).await?;
             lines.push(format!("     Package cache cleaned: {}", output.lines().next().unwrap_or("done")));
         } else {
@@ -472,8 +472,8 @@ async fn clean_os(
     if do_autoremove {
         if execute && !dry_run {
             let output = executor.execute_command(
-                &format!("/usr/bin/{}", pm_binary),
-                &["autoremove", "-y"]
+                "/usr/bin/sudo",
+                &[pm_binary, "autoremove", "-y"]
             ).await?;
 
             // Parse output to count removed packages
