@@ -16,6 +16,9 @@ ssh2 = "0.9"
 
 # Docker API for cleanup operations
 bollard = "0.16"
+chrono = "0.4"
+urlencoding = "2.1"
+futures-util = "0.3"
 
 # Webhook server
 axum = "0.7"

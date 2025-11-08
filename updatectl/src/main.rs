@@ -7,6 +7,8 @@ mod executor;
 mod updater;
 mod checkers;
 mod webhook;
+mod cleanup;
+mod remote_cleanup;
 
 use types::Server;
 use updater::{update_os, update_docker};
@@ -64,6 +66,36 @@ enum Commands {
 
     /// Update both OS packages and Docker images
     All,
+
+    /// Clean Docker resources (images, networks, containers, build cache)
+    CleanDocker {
+        /// Cleanup profile: conservative (default), moderate, or aggressive
+        #[arg(long, default_value = "conservative")]
+        profile: String,
+
+        /// Actually execute cleanup (default is analysis only)
+        #[arg(long)]
+        execute: bool,
+    },
+
+    /// Clean OS resources (package cache, old kernels, etc.)
+    CleanOs {
+        /// Clean package manager cache (apt clean, dnf clean)
+        #[arg(long)]
+        cache: bool,
+
+        /// Remove unused packages (apt autoremove, dnf autoremove)
+        #[arg(long)]
+        autoremove: bool,
+
+        /// Clean all (cache + autoremove)
+        #[arg(long)]
+        all: bool,
+
+        /// Actually execute cleanup (default is analysis only)
+        #[arg(long)]
+        execute: bool,
+    },
 
     /// List available servers or show examples
     List {
@@ -185,6 +217,27 @@ async fn main() -> Result<()> {
                 }
             }
             Commands::All => println!("Operation: OS packages + Docker images"),
+            Commands::CleanDocker { profile, execute } => {
+                if *execute {
+                    println!("Operation: Execute Docker cleanup (profile: {})", profile);
+                } else {
+                    println!("Operation: Analyze Docker cleanup opportunities (profile: {})", profile);
+                }
+            }
+            Commands::CleanOs { cache, autoremove, all, execute } => {
+                let mut ops = Vec::new();
+                if *all {
+                    ops.push("cache + autoremove");
+                } else {
+                    if *cache { ops.push("cache"); }
+                    if *autoremove { ops.push("autoremove"); }
+                }
+                if *execute {
+                    println!("Operation: Execute OS cleanup ({})", ops.join(", "));
+                } else {
+                    println!("Operation: Analyze OS cleanup opportunities ({})", ops.join(", "));
+                }
+            }
             Commands::List { .. } => {
                 // Already handled early - this shouldn't be reached
                 unreachable!("List commands should be handled before confirmation prompt")
@@ -301,6 +354,14 @@ async fn execute_update(
             let docker_result = update_docker(&executor, true, None, dry_run).await?;
             report_lines.push(format!("   Docker Updates: {}", docker_result));
         }
+        Commands::CleanDocker { profile, execute } => {
+            let result = clean_docker(server, &executor, profile, *execute, ssh_key).await?;
+            report_lines.push(result);
+        }
+        Commands::CleanOs { cache, autoremove, all, execute } => {
+            let result = clean_os(&executor, *cache, *autoremove, *all, *execute, dry_run).await?;
+            report_lines.push(result);
+        }
         Commands::List { .. } => {
             // Already handled early - this shouldn't be reached
             unreachable!("List commands should be handled before server execution")
@@ -312,6 +373,129 @@ async fn execute_update(
     }
 
     Ok(report_lines.join("\n"))
+}
+
+/// Execute Docker cleanup on a server
+async fn clean_docker(
+    server: &Server,
+    executor: &common::RemoteExecutor,
+    profile_str: &str,
+    execute: bool,
+    ssh_key: Option<&str>,
+) -> Result<String> {
+    use cleanup::profiles::CleanupProfile;
+
+    // Parse cleanup profile
+    let profile = CleanupProfile::from_str(profile_str)
+        .unwrap_or(CleanupProfile::Conservative);
+
+    let mut lines = Vec::new();
+    lines.push(format!("   Docker Cleanup ({:?} profile):", profile));
+
+    if server.is_local() {
+        // Local cleanup using Bollard API
+        let docker = bollard::Docker::connect_with_unix_defaults()?;
+
+        // Always analyze
+        let report = cleanup::analyze_cleanup(&docker).await?;
+        lines.push(format!("     Total reclaimable: {}", cleanup::format_bytes(report.total_reclaimable_bytes)));
+
+        // Execute if requested
+        if execute {
+            let result = cleanup::profiles::execute_cleanup_with_profile(&docker, profile).await?;
+            lines.push(format!("     Removed: {} items",
+                result.dangling_images_removed + result.networks_removed + result.stopped_containers_removed + result.unused_images_removed));
+            lines.push(format!("     Reclaimed: {}", cleanup::format_bytes(result.space_reclaimed_bytes)));
+        } else {
+            lines.push("     (Analysis only - use --execute to clean)".to_string());
+        }
+    } else {
+        // Remote cleanup using SSH + Docker CLI
+        let remote_executor = common::RemoteExecutor::new(server.clone(), ssh_key)?;
+
+        // Always analyze
+        let report = remote_cleanup::analyze_cleanup_remote(&remote_executor, &server.name).await?;
+        lines.push(format!("     Total reclaimable: {}", cleanup::format_bytes(report.total_reclaimable_bytes)));
+
+        // Execute if requested
+        if execute {
+            let result = remote_cleanup::execute_cleanup_with_profile_remote(&remote_executor, profile).await?;
+            lines.push(format!("     Removed: {} items",
+                result.dangling_images_removed + result.networks_removed + result.stopped_containers_removed + result.unused_images_removed));
+            lines.push(format!("     Reclaimed: {}", cleanup::format_bytes(result.space_reclaimed_bytes)));
+        } else {
+            lines.push("     (Analysis only - use --execute to clean)".to_string());
+        }
+    }
+
+    Ok(lines.join("\n"))
+}
+
+/// Execute OS cleanup on a server
+async fn clean_os(
+    executor: &common::RemoteExecutor,
+    cache: bool,
+    autoremove: bool,
+    all: bool,
+    execute: bool,
+    dry_run: bool,
+) -> Result<String> {
+    use crate::executor::UpdatectlExecutor;
+
+    let mut lines = Vec::new();
+    lines.push("   OS Cleanup:".to_string());
+
+    // Determine which operations to perform
+    let do_cache = all || cache;
+    let do_autoremove = all || autoremove;
+
+    if !do_cache && !do_autoremove {
+        return Ok("   OS Cleanup: No operations specified (use --cache, --autoremove, or --all)".to_string());
+    }
+
+    // Detect package manager
+    let pm = executor.detect_package_manager().await?;
+    let pm_binary = pm.binary();
+
+    if do_cache {
+        if execute && !dry_run {
+            let output = executor.execute_command(
+                &format!("/usr/bin/{}", pm_binary),
+                &["clean", "all"]
+            ).await?;
+            lines.push(format!("     Package cache cleaned: {}", output.lines().next().unwrap_or("done")));
+        } else {
+            lines.push(format!("     Package cache: {} clean all (not executed)", pm_binary));
+        }
+    }
+
+    if do_autoremove {
+        if execute && !dry_run {
+            let output = executor.execute_command(
+                &format!("/usr/bin/{}", pm_binary),
+                &["autoremove", "-y"]
+            ).await?;
+
+            // Parse output to count removed packages
+            let removed_count = output.lines()
+                .filter(|line| line.contains("Removing") || line.contains("removed"))
+                .count();
+
+            if removed_count > 0 {
+                lines.push(format!("     Removed {} unused packages", removed_count));
+            } else {
+                lines.push("     No unused packages to remove".to_string());
+            }
+        } else {
+            lines.push(format!("     Autoremove: {} autoremove (not executed)", pm_binary));
+        }
+    }
+
+    if !execute {
+        lines.push("     (Analysis only - use --execute to clean)".to_string());
+    }
+
+    Ok(lines.join("\n"))
 }
 
 /// Build a registry of server name -> Server from UPDATE_SERVERS env var

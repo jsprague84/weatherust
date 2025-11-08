@@ -370,91 +370,53 @@ async fn execute_docker_update(
 }
 
 async fn execute_safe_cleanup_for_server(server: &Server, ssh_key: Option<&str>) -> Result<String> {
+    use crate::cleanup::profiles::CleanupProfile;
+
     if server.is_local() {
-        execute_safe_cleanup_local().await
+        // Local cleanup using Bollard
+        let docker = bollard::Docker::connect_with_unix_defaults()?;
+        let result = crate::cleanup::profiles::execute_cleanup_with_profile(
+            &docker,
+            CleanupProfile::Conservative
+        ).await?;
+
+        let mut parts = Vec::new();
+        if result.dangling_images_removed > 0 {
+            parts.push(format!("{} dangling images", result.dangling_images_removed));
+        }
+        if result.networks_removed > 0 {
+            parts.push(format!("{} networks", result.networks_removed));
+        }
+        if result.stopped_containers_removed > 0 {
+            parts.push(format!("{} containers", result.stopped_containers_removed));
+        }
+
+        Ok(format!("Removed {} | Reclaimed {}",
+            parts.join(" + "),
+            crate::cleanup::format_bytes(result.space_reclaimed_bytes)))
     } else {
-        execute_safe_cleanup_remote(server, ssh_key).await
+        // Remote cleanup via SSH
+        let executor = RemoteExecutor::new(server.clone(), ssh_key)?;
+        let result = crate::remote_cleanup::execute_cleanup_with_profile_remote(
+            &executor,
+            CleanupProfile::Conservative
+        ).await?;
+
+        let mut parts = Vec::new();
+        if result.dangling_images_removed > 0 {
+            parts.push(format!("{} dangling images", result.dangling_images_removed));
+        }
+        if result.networks_removed > 0 {
+            parts.push(format!("{} networks", result.networks_removed));
+        }
+        if result.stopped_containers_removed > 0 {
+            parts.push(format!("{} containers", result.stopped_containers_removed));
+        }
+
+        Ok(format!("Removed {} | Reclaimed {}",
+            parts.join(" + "),
+            crate::cleanup::format_bytes(result.space_reclaimed_bytes)))
     }
-}
-
-async fn execute_safe_cleanup_local() -> Result<String> {
-    use bollard::Docker;
-    use bollard::image::PruneImagesOptions;
-    use bollard::network::PruneNetworksOptions;
-    use std::collections::HashMap;
-
-    let docker = Docker::connect_with_unix_defaults()?;
-
-    let mut results = Vec::new();
-    let mut total_space_reclaimed: u64 = 0;
-
-    // Prune dangling images
-    let mut filters = HashMap::new();
-    filters.insert("dangling", vec!["true"]);
-    let image_prune_result = docker.prune_images(Some(PruneImagesOptions { filters })).await?;
-    let image_count = image_prune_result.images_deleted.as_ref().map(|v| v.len()).unwrap_or(0);
-    let image_space = image_prune_result.space_reclaimed.unwrap_or(0).max(0) as u64;
-    total_space_reclaimed += image_space;
-    results.push(format!("{} dangling images", image_count));
-
-    // Prune unused networks
-    let network_prune_result = docker.prune_networks(None::<PruneNetworksOptions<String>>).await?;
-    let network_count = network_prune_result.networks_deleted.as_ref().map(|v| v.len()).unwrap_or(0);
-    results.push(format!("{} unused networks", network_count));
-
-    let space_str = if total_space_reclaimed >= 1024 * 1024 * 1024 {
-        format!("{:.2}GB", total_space_reclaimed as f64 / (1024.0 * 1024.0 * 1024.0))
-    } else if total_space_reclaimed >= 1024 * 1024 {
-        format!("{}MB", total_space_reclaimed / (1024 * 1024))
-    } else {
-        format!("{}KB", total_space_reclaimed / 1024)
-    };
-
-    Ok(format!("Removed {} | Reclaimed {}", results.join(" + "), space_str))
-}
-
-async fn execute_safe_cleanup_remote(server: &Server, ssh_key: Option<&str>) -> Result<String> {
-    let executor = RemoteExecutor::new(server.clone(), ssh_key)?;
-
-    let mut results = Vec::new();
-    let mut total_space_reclaimed: u64 = 0;
-
-    // Prune dangling images
-    let prune_images_output = executor.execute_command(
-        "/usr/bin/docker",
-        &["image", "prune", "-f", "--filter", "dangling=true"]
-    ).await?;
-
-    // Parse output to count removed images and space reclaimed
-    // Docker output format: "Deleted Images:\nuntagged: ...\ndeleted: sha256:...\n\nTotal reclaimed space: 1.23GB"
-    let image_count = prune_images_output.lines()
-        .filter(|line| line.starts_with("deleted:") || line.starts_with("untagged:"))
-        .count();
-    let image_space = parse_reclaimed_space(&prune_images_output);
-    total_space_reclaimed += image_space;
-    results.push(format!("{} dangling images", image_count));
-
-    // Prune unused networks
-    let prune_networks_output = executor.execute_command(
-        "/usr/bin/docker",
-        &["network", "prune", "-f"]
-    ).await?;
-
-    // Count networks from output
-    let network_count = prune_networks_output.lines()
-        .filter(|line| !line.is_empty() && !line.contains("WARNING") && !line.contains("Deleted Networks"))
-        .count();
-    results.push(format!("{} unused networks", network_count));
-
-    let space_str = if total_space_reclaimed >= 1024 * 1024 * 1024 {
-        format!("{:.2}GB", total_space_reclaimed as f64 / (1024.0 * 1024.0 * 1024.0))
-    } else if total_space_reclaimed >= 1024 * 1024 {
-        format!("{}MB", total_space_reclaimed / (1024 * 1024))
-    } else {
-        format!("{}KB", total_space_reclaimed / 1024)
-    };
-
-    Ok(format!("Removed {} | Reclaimed {}", results.join(" + "), space_str))
 }
 
 async fn execute_prune_unused_images_for_server(server: &Server, ssh_key: Option<&str>) -> Result<String> {

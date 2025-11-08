@@ -605,16 +605,11 @@ checksum = "5419bdc4f6a9207fbeba6d11b604d481addf78ecd10c11ad51e76c2f6482748d"
 name = "healthmon"
 version = "0.1.0"
 dependencies = [
- "anyhow",
  "bollard",
- "chrono",
  "clap",
  "common",
  "futures-util",
- "serde",
- "serde_json",
  "tokio",
- "urlencoding",
 ]
 
 [[package]]
@@ -2177,9 +2172,11 @@ dependencies = [
  "anyhow",
  "axum",
  "bollard",
+ "chrono",
  "clap",
  "common",
  "env_logger",
+ "futures-util",
  "log",
  "reqwest",
  "serde",
@@ -2188,6 +2185,7 @@ dependencies = [
  "tokio",
  "tower 0.4.13",
  "tower-http 0.5.2",
+ "urlencoding",
 ]
 
 [[package]]

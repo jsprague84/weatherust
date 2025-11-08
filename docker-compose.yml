@@ -138,16 +138,16 @@ services:
       - "ofelia.job-exec.healthmon-health.command=/app/healthmon health --quiet"
 
       # Docker cleanup analysis weekly (Sundays at 02:00)
-      - "ofelia.job-exec.healthmon-cleanup-report.schedule=0 0 2 * * 0"
-      - "ofelia.job-exec.healthmon-cleanup-report.container=healthmon_runner"
-      - "ofelia.job-exec.healthmon-cleanup-report.command=/app/healthmon cleanup --quiet"
+      - "ofelia.job-exec.docker-cleanup-report.schedule=0 0 2 * * 0"
+      - "ofelia.job-exec.docker-cleanup-report.container=updatectl_runner"
+      - "ofelia.job-exec.docker-cleanup-report.command=/app/updatectl clean-docker --local --quiet"
 
       # Docker safe auto-cleanup - OPTIONAL (DISABLED by default)
       # CAUTION: Removes dangling images and unused networks automatically
       # Uncomment to enable monthly safe cleanup (1st of month at 02:30)
-      # - "ofelia.job-exec.healthmon-cleanup-safe.schedule=0 30 2 1 * *"
-      # - "ofelia.job-exec.healthmon-cleanup-safe.container=healthmon_runner"
-      # - "ofelia.job-exec.healthmon-cleanup-safe.command=/app/healthmon cleanup --quiet --execute-safe"
+      # - "ofelia.job-exec.docker-cleanup-safe.schedule=0 30 2 1 * *"
+      # - "ofelia.job-exec.docker-cleanup-safe.container=updatectl_runner"
+      # - "ofelia.job-exec.docker-cleanup-safe.command=/app/updatectl clean-docker --local --quiet --execute --profile conservative"
 
       # Update monitor daily at 03:00 (checks OS packages and Docker images)
       # NOTE: Add localhost to UPDATE_SERVERS (e.g., "docker-vm:local,...") to include it automatically

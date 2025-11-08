@@ -5,7 +5,7 @@ use crate::cleanup::{
     LogStats, VolumeStats
 };
 use crate::cleanup::profiles::CleanupProfile;
-use crate::executor::RemoteExecutor;
+use common::RemoteExecutor;
 use anyhow::Result;
 use serde_json::Value;
 
