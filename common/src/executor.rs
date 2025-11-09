@@ -1,6 +1,7 @@
 use anyhow::{anyhow, Result};
 use tokio::process::Command;
 use tokio::time::{timeout, Duration};
+use tracing::{debug, info};
 
 use crate::Server;
 
@@ -38,7 +39,7 @@ impl RemoteExecutor {
 
     /// Execute command locally
     async fn execute_local(&self, cmd: &str, args: &[&str]) -> Result<String> {
-        eprintln!("Executing locally: {} {}", cmd, args.join(" "));
+        info!(cmd = %cmd, args = ?args, "Executing command locally");
 
         // Add timeout to prevent hanging (2 minutes max)
         let output = timeout(
@@ -57,7 +58,7 @@ impl RemoteExecutor {
         let stderr = String::from_utf8_lossy(&output.stderr).to_string();
 
         if !stderr.is_empty() {
-            eprintln!("stderr from {}: {}", cmd, stderr);
+            debug!(cmd = %cmd, stderr = %stderr, "Command produced stderr output");
         }
 
         Ok(stdout)
@@ -87,7 +88,7 @@ impl RemoteExecutor {
             format!("{} {}", cmd, quoted_args.join(" "))
         };
 
-        eprintln!("Executing via SSH on {}: {}", ssh_host, remote_cmd);
+        info!(ssh_host = %ssh_host, remote_cmd = %remote_cmd, "Executing command via SSH");
 
         // Build SSH command
         let mut ssh_cmd = Command::new("ssh");

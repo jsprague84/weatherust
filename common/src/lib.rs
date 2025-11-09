@@ -3,9 +3,12 @@ use dotenvy::dotenv;
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
 use std::env;
+use tracing::{debug, warn};
 
 pub mod executor;
 pub use executor::RemoteExecutor;
+
+pub mod metrics;
 
 pub fn dotenv_init() {
     let _ = dotenv();
@@ -103,7 +106,7 @@ async fn send_gotify_with_key(
                 s.trim().to_string()
             }
             Err(e) => {
-                eprintln!("GOTIFY_KEY_FILE read error from {}: {}", path, e);
+                warn!(path = %path, error = %e, "GOTIFY_KEY_FILE read error");
                 return Ok(());
             }
         }
@@ -112,7 +115,7 @@ async fn send_gotify_with_key(
     };
 
     if gotify_key.is_empty() {
-        eprintln!("{} not set (also checked GOTIFY_KEY_FILE); skipping Gotify notification.", key_var);
+        debug!(key_var = %key_var, "Gotify key not set (also checked GOTIFY_KEY_FILE); skipping notification");
         return Ok(());
     }
 
@@ -130,17 +133,17 @@ async fn send_gotify_with_key(
         } else {
             "***".to_string()
         };
-        eprintln!(
-            "[gotify] url={} key_source={} key={} bytes_title={} bytes_body={}",
-            gotify_url,
-            key_source,
-            masked,
-            title.len(),
-            body.len()
+        debug!(
+            url = %gotify_url,
+            key_source = %key_source,
+            key = %masked,
+            bytes_title = title.len(),
+            bytes_body = body.len(),
+            "Sending Gotify notification"
         );
     }
 
-    client
+    let result = client
         .post(&gotify_url)
         .header("X-Gotify-Key", gotify_key)
         .json(&serde_json::json!({
@@ -150,8 +153,13 @@ async fn send_gotify_with_key(
         }))
         .send()
         .await?
-        .error_for_status()?;
+        .error_for_status();
 
+    // Record metrics
+    let service = key_var.trim_end_matches("_GOTIFY_KEY").to_lowercase();
+    metrics::record_notification_sent(&service, "gotify", result.is_ok());
+
+    result?;
     Ok(())
 }
 
@@ -297,14 +305,13 @@ async fn send_ntfy_with_topic(
         .unwrap_or(false);
 
     if debug {
-        eprintln!(
-            "[ntfy] url={}/{} topic_var={} bytes_title={} bytes_body={} actions={}",
-            ntfy_url,
-            topic,
-            topic_var,
-            title.len(),
-            body.len(),
-            actions.as_ref().map(|a| a.len()).unwrap_or(0)
+        debug!(
+            url = %format!("{}/{}", ntfy_url, topic),
+            topic_var = %topic_var,
+            bytes_title = title.len(),
+            bytes_body = body.len(),
+            actions = actions.as_ref().map(|a| a.len()).unwrap_or(0),
+            "Preparing ntfy notification"
         );
     }
 
@@ -325,7 +332,10 @@ async fn send_ntfy_with_topic(
     }
 
     if debug {
-        eprintln!("[ntfy] JSON payload: {}", serde_json::to_string_pretty(&json_body)?);
+        debug!(
+            payload = %serde_json::to_string_pretty(&json_body)?,
+            "ntfy JSON payload"
+        );
     }
 
     // When using JSON, post to base URL (topic is in JSON body)
@@ -337,11 +347,16 @@ async fn send_ntfy_with_topic(
         request = request.header("Authorization", format!("Bearer {}", token));
     }
 
-    request
+    let result = request
         .send()
         .await?
-        .error_for_status()?;
+        .error_for_status();
 
+    // Record metrics
+    let service = topic_var.trim_end_matches("_NTFY_TOPIC").to_lowercase();
+    metrics::record_notification_sent(&service, "ntfy", result.is_ok());
+
+    result?;
     Ok(())
 }
 

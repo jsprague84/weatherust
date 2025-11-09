@@ -28,5 +28,9 @@ dotenvy = "0.15"
 # CLI flags
 clap = { version = "4", features = ["derive"] }
 
+# logging & observability
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt", "json"] }
+
 # internal shared helpers
 common = { path = "common" }

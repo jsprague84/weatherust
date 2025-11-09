@@ -5,6 +5,7 @@ use futures_util::StreamExt;
 use std::collections::HashSet;
 use std::env;
 use tokio::time::{timeout, Duration};
+use tracing::warn;
 
 #[derive(Parser, Debug)]
 #[command(name = "healthmon")]
@@ -43,6 +44,15 @@ enum Commands {
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     dotenv_init();
+
+    // Initialize tracing
+    tracing_subscriber::fmt()
+        .with_env_filter(
+            tracing_subscriber::EnvFilter::try_from_default_env()
+                .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info"))
+        )
+        .init();
+
     let cli = Cli::parse();
 
     match cli.command {
@@ -169,6 +179,9 @@ async fn run_health_check(
             }
         }
 
+        // Record container health metrics
+        common::metrics::record_container_health(&name, &health_status, cpu_pct, mem_pct);
+
         if bad {
             let mut parts = vec![format!("{} ({})", name, short_id)];
             if let Some(v) = cpu_pct {
@@ -212,11 +225,11 @@ async fn run_health_check(
         let client = http_client();
         // Send to Gotify (if configured)
         if let Err(e) = send_gotify_healthmon(&client, title, &body).await {
-            eprintln!("Gotify send error: {e}");
+            warn!(error = %e, "Gotify send error");
         }
         // Send to ntfy.sh (if configured)
         if let Err(e) = send_ntfy_healthmon(&client, title, &body, None).await {
-            eprintln!("ntfy send error: {e}");
+            warn!(error = %e, "ntfy send error");
         }
     }
 

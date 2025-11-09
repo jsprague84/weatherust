@@ -6,6 +6,8 @@ use clap::Parser;
 use common::{dotenv_init, send_gotify_weatherust, send_ntfy_weatherust};
 use reqwest::Client;
 use serde::Deserialize;
+use std::time::Instant;
+use tracing::warn;
 
 /// CLI flags for non-interactive runs (systemd, cron, n8n)
 #[derive(Parser, Debug)]
@@ -85,6 +87,14 @@ struct Weather {
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     dotenv_init(); // load .env if present
 
+    // Initialize tracing
+    tracing_subscriber::fmt()
+        .with_env_filter(
+            tracing_subscriber::EnvFilter::try_from_default_env()
+                .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info"))
+        )
+        .init();
+
     let args = Args::parse();
 
     let api_key = env::var("OWM_API_KEY").expect("Missing OWM_API_KEY in environment or .env file");
@@ -108,7 +118,23 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let onecall_url = format!(
         "https://api.openweathermap.org/data/3.0/onecall?lat={lat}&lon={lon}&exclude=minutely,hourly,alerts&units={units}&appid={api_key}"
     );
-    let oc_resp = client.get(&onecall_url).send().await?.error_for_status()?;
+
+    // Track API call timing
+    let start = Instant::now();
+    let oc_result = client.get(&onecall_url).send().await?.error_for_status();
+    let elapsed = start.elapsed().as_secs_f64();
+
+    let oc_resp = match oc_result {
+        Ok(resp) => {
+            common::metrics::record_weather_fetch(true, elapsed);
+            resp
+        }
+        Err(e) => {
+            common::metrics::record_weather_fetch(false, elapsed);
+            return Err(e.into());
+        }
+    };
+
     let data: OneCall = oc_resp.json().await?;
 
     // timezone-aware timestamp for "current"
@@ -182,12 +208,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Send to Gotify (if configured)
     if let Err(e) = send_gotify_weatherust(&client, &summary, &human_output).await {
-        eprintln!("Gotify send error: {e}");
+        warn!(error = %e, "Gotify send error");
     }
 
     // Send to ntfy.sh (if configured)
     if let Err(e) = send_ntfy_weatherust(&client, &summary, &human_output, None).await {
-        eprintln!("ntfy send error: {e}");
+        warn!(error = %e, "ntfy send error");
     }
 
     Ok(())
@@ -319,3 +345,6 @@ fn normalize_city_query(input: &str) -> String {
 }
 
 // moved to common::send_gotify
+
+#[cfg(test)]
+mod tests;

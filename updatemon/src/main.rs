@@ -2,6 +2,7 @@ use anyhow::Result;
 use clap::Parser;
 use common::{dotenv_init, http_client, send_gotify_updatemon, send_ntfy_updatemon, NtfyAction};
 use reqwest::Client;
+use tracing::error;
 
 mod types;
 mod checkers;
@@ -42,7 +43,19 @@ struct Args {
 #[tokio::main]
 async fn main() -> Result<()> {
     dotenv_init();
-    env_logger::init();
+
+    // Initialize tracing (also bridges log macros)
+    tracing_subscriber::fmt()
+        .with_env_filter(
+            tracing_subscriber::EnvFilter::try_from_default_env()
+                .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info"))
+        )
+        .with_writer(std::io::stderr)
+        .with_target(true)
+        .init();
+
+    // Initialize tracing-log bridge for legacy log macros
+    tracing_log::LogTracer::init().ok();
 
     let args = Args::parse();
     let client = http_client();
@@ -94,7 +107,7 @@ async fn main() -> Result<()> {
             match check_server(&server_clone, docker_check, ssh_key_clone.as_deref()).await {
                 Ok(report) => report,
                 Err(e) => {
-                    eprintln!("Error checking {}: {}", server_clone.name, e);
+                    error!(server = %server_clone.name, error = %e, "Error checking server");
                     format!("❌ {} - Error: {}", server_clone.name, e)
                 }
             }
@@ -109,7 +122,7 @@ async fn main() -> Result<()> {
         match task.await {
             Ok(report) => all_reports.push(report),
             Err(e) => {
-                eprintln!("Task join error: {}", e);
+                error!(error = %e, "Task join error");
             }
         }
     }
@@ -124,7 +137,7 @@ async fn main() -> Result<()> {
 
     // Send to Gotify (if configured) - full details
     if let Err(e) = send_gotify_updatemon(&client, &summary, &details).await {
-        eprintln!("Gotify send error: {e}");
+        error!(error = %e, "Failed to send Gotify notification");
     }
 
     // Send to ntfy.sh (if configured) with action buttons - one notification per server
@@ -162,7 +175,7 @@ async fn send_ntfy_per_server(client: &Client, reports: &[String], servers: &[Se
 
         // Send notification
         if let Err(e) = send_ntfy_updatemon(client, &title, &message, Some(actions)).await {
-            eprintln!("ntfy send error for {}: {}", server.name, e);
+            error!(server = %server.name, error = %e, "Failed to send ntfy notification");
         }
     }
 }

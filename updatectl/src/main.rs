@@ -1,6 +1,7 @@
 use anyhow::Result;
 use clap::{Parser, Subcommand};
 use common::{dotenv_init, http_client, send_gotify_updatectl, send_ntfy_updatectl};
+use tracing::{error, warn};
 
 mod types;
 mod executor;
@@ -122,7 +123,18 @@ enum ListCommands {
 #[tokio::main]
 async fn main() -> Result<()> {
     dotenv_init();
-    env_logger::init();
+
+    // Initialize tracing
+    tracing_subscriber::fmt()
+        .with_env_filter(
+            tracing_subscriber::EnvFilter::try_from_default_env()
+                .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info"))
+        )
+        .with_writer(std::io::stderr)
+        .init();
+
+    // Setup tracing to log bridge for compatibility with log crate usage in other modules
+    tracing_log::LogTracer::init().ok();
 
     let args = Args::parse();
     let client = http_client();
@@ -150,7 +162,7 @@ async fn main() -> Result<()> {
             .expect("UPDATECTL_WEBHOOK_SECRET must be set for webhook server");
 
         if secret.len() < 32 {
-            eprintln!("Warning: UPDATECTL_WEBHOOK_SECRET should be at least 32 characters");
+            warn!("UPDATECTL_WEBHOOK_SECRET should be at least 32 characters");
         }
 
         let ssh_key = args.ssh_key
@@ -282,7 +294,7 @@ async fn main() -> Result<()> {
             match execute_update(&server, &command, dry_run, ssh_key_clone.as_deref()).await {
                 Ok(report) => report,
                 Err(e) => {
-                    eprintln!("Error updating {}: {}", server.name, e);
+                    error!(server = %server.name, error = %e, "Error updating server");
                     format!("❌ {} - Error: {}", server.name, e)
                 }
             }
@@ -297,7 +309,7 @@ async fn main() -> Result<()> {
         match task.await {
             Ok(report) => all_reports.push(report),
             Err(e) => {
-                eprintln!("Task join error: {}", e);
+                error!(error = %e, "Task join error");
             }
         }
     }
@@ -312,12 +324,12 @@ async fn main() -> Result<()> {
 
     // Send to Gotify (if configured)
     if let Err(e) = send_gotify_updatectl(&client, &summary, &details).await {
-        eprintln!("Gotify send error: {e}");
+        error!(error = %e, "Gotify send error");
     }
 
     // Send to ntfy.sh (if configured)
     if let Err(e) = send_ntfy_updatectl(&client, &summary, &details, None).await {
-        eprintln!("ntfy send error: {e}");
+        error!(error = %e, "ntfy send error");
     }
 
     Ok(())

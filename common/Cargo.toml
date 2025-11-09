@@ -11,3 +11,11 @@ dotenvy = "0.15"
 anyhow = "1.0"
 tokio = { version = "1", features = ["process", "time"] }
 
+# logging & observability
+tracing = "0.1"
+metrics = "0.23"
+
+[dev-dependencies]
+tokio = { version = "1", features = ["full"] }
+mockito = "1.5"
+

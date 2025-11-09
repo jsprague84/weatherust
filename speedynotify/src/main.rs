@@ -3,6 +3,7 @@ use common::{dotenv_init, http_client, send_gotify_speedynotify, send_ntfy_speed
 use serde::Deserialize;
 use std::env;
 use tokio::process::Command;
+use tracing::{error, info, warn};
 
 #[derive(Parser, Debug)]
 #[command(name = "speedynotify")]
@@ -82,6 +83,15 @@ struct PyServer {
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     dotenv_init();
+
+    // Initialize tracing
+    tracing_subscriber::fmt()
+        .with_env_filter(
+            tracing_subscriber::EnvFilter::try_from_default_env()
+                .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info"))
+        )
+        .init();
+
     let args = Args::parse();
 
     // If a separate token is provided for speedynotify, prefer it locally
@@ -125,7 +135,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     return Ok(());
                 }
             }
-            eprintln!("Ookla speedtest attempt failed: {}\nFalling back to python speedtest-cli if available...", e);
+            warn!(error = %e, "Ookla speedtest failed, falling back to Python speedtest-cli if available");
             match run_and_parse_python(server_id).await {
                 Ok((down_mbps, up_mbps, ping_ms, isp, iface, server)) => {
                     emit_and_notify(
@@ -140,9 +150,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                         .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
                         .unwrap_or(false);
                     if allow_text {
-                        eprintln!(
-                            "Python speedtest-cli unavailable: {}\nAttempting to parse plain text output from 'speedtest' (SPEEDY_ALLOW_TEXT_FALLBACK=1)...",
-                            e2
+                        warn!(
+                            error = %e2,
+                            "Python speedtest-cli unavailable, attempting text fallback (SPEEDY_ALLOW_TEXT_FALLBACK=1)"
                         );
                         let (down_mbps, up_mbps, ping_ms, isp, iface, server) =
                             run_and_parse_text().await?;
@@ -152,8 +162,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                         )
                         .await?;
                     } else {
-                        eprintln!(
-                            "No JSON-capable speedtest CLI found. Install 'speedtest-cli' (python) and retry.\nFedora: sudo dnf install -y speedtest-cli  (or: sudo dnf install -y python3-speedtest-cli)\nOr via pipx: pipx install speedtest-cli"
+                        error!(
+                            "No JSON-capable speedtest CLI found. Install 'speedtest-cli' (python) and retry. \
+                            Fedora: sudo dnf install -y speedtest-cli (or: sudo dnf install -y python3-speedtest-cli) \
+                            Or via pipx: pipx install speedtest-cli"
                         );
                         return Err("speedtest-cli not installed".into());
                     }
@@ -286,7 +298,7 @@ async fn run_and_parse_python(
             }
             Ok(output) => {
                 let stderr = String::from_utf8_lossy(&output.stderr);
-                eprintln!("{} failed with {}\n{}", bin, output.status, stderr);
+                warn!(bin = %bin, status = %output.status, stderr = %stderr, "Speedtest command failed");
             }
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
             Err(e) => return Err(e.into()),
@@ -330,6 +342,9 @@ async fn emit_and_notify(
         println!("{}", human);
     }
 
+    // Record metrics
+    common::metrics::record_speedtest_result(down_mbps, up_mbps, ping_ms, degraded);
+
     let client = http_client();
     let title = if degraded {
         "Speedtest: Degraded"
@@ -338,11 +353,11 @@ async fn emit_and_notify(
     };
     // Send to Gotify (if configured)
     if let Err(e) = send_gotify_speedynotify(&client, title, &human).await {
-        eprintln!("Gotify send error: {e}");
+        warn!(error = %e, "Gotify send error");
     }
     // Send to ntfy.sh (if configured)
     if let Err(e) = send_ntfy_speedynotify(&client, title, &human, None).await {
-        eprintln!("ntfy send error: {e}");
+        warn!(error = %e, "ntfy send error");
     }
     Ok(())
 }
@@ -419,3 +434,6 @@ fn parse_first_number(s: &str) -> Option<f64> {
     };
     sfx.parse::<f64>().ok()
 }
+
+#[cfg(test)]
+mod tests;
