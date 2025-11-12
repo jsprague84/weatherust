@@ -26,9 +26,9 @@ query_range:
 schema_config:
   configs:
     - from: 2020-10-24
-      store: boltdb-shipper
+      store: tsdb
       object_store: filesystem
-      schema: v11
+      schema: v13
       index:
         prefix: index_
         period: 24h
@@ -40,3 +40,14 @@ limits_config:
   retention_period: 168h  # 7 days
   reject_old_samples: true
   reject_old_samples_max_age: 168h
+  # Query performance limits (prevent UI freezing)
+  max_query_length: 721h  # 30 days
+  max_query_lookback: 0  # No limit on lookback
+  max_streams_per_user: 0  # No limit
+  max_global_streams_per_user: 5000
+  max_entries_limit_per_query: 5000
+  max_query_series: 500
+  # Split large queries into smaller chunks
+  split_queries_by_interval: 24h
+  # Query timeout
+  query_timeout: 1m
