@@ -9,9 +9,10 @@ datasources:
     editable: true
     timeout: 30
     jsonData:
-      maxLines: 5000
+      maxLines: 500
       timeout: 30
       # Query performance settings
       derivedFields: []
+      # Disable live queries to reduce browser load
       # Default time range (helps prevent huge queries)
       # Users can still change this in the UI
