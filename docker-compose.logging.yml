@@ -4,7 +4,7 @@
 services:
   # Loki - Log aggregation
   loki:
-    image: grafana/loki:3.0.0
+    image: grafana/loki:latest
     container_name: loki
     restart: unless-stopped
     ports:
@@ -18,7 +18,7 @@ services:
 
   # Promtail - Log shipper (sends Docker logs to Loki)
   promtail:
-    image: grafana/promtail:3.0.0
+    image: grafana/promtail:latest
     container_name: promtail
     restart: unless-stopped
     volumes:
@@ -33,7 +33,7 @@ services:
 
   # Grafana - Visualization
   grafana:
-    image: grafana/grafana:11.0.0
+    image: grafana/grafana:latest
     container_name: grafana
     restart: unless-stopped
     environment:
