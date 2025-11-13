@@ -42,16 +42,14 @@ services:
       - GF_SECURITY_ADMIN_PASSWORD=${GRAFANA_PASSWORD:-admin}
       - GF_USERS_ALLOW_SIGN_UP=false
       - GF_INSTALL_PLUGINS=
+      # Fix auth token rotation loop causing UI freeze
+      - GF_AUTH_TOKEN_ROTATION_INTERVAL_MINUTES=0
+      - GF_AUTH_DISABLE_LOGIN_FORM=false
+      - GF_AUTH_DISABLE_SIGNOUT_MENU=false
       # Performance tuning
       - GF_LOG_LEVEL=warn
       - GF_DATAPROXY_TIMEOUT=30
       - GF_DATAPROXY_MAX_IDLE_CONNECTIONS=100
-      # Query optimization
-      - GF_EXPLORE_ENABLED=true
-      - GF_DASHBOARDS_DEFAULT_HOME_DASHBOARD_PATH=
-      # Memory and rendering
-      - GF_RENDERING_SERVER_URL=
-      - GF_RENDERING_CALLBACK_URL=
     volumes:
       - grafana-data:/var/lib/grafana
       - ./grafana-datasources.yml:/etc/grafana/provisioning/datasources/datasources.yml
