@@ -22,7 +22,7 @@ pub async fn update_os(executor: &RemoteExecutor, dry_run: bool) -> Result<Strin
     }
 
     // Perform actual update based on package manager
-    let result = match pm {
+    match pm {
         PackageManager::Apt => {
             // Update package lists
             executor.execute_command(
@@ -32,32 +32,35 @@ pub async fn update_os(executor: &RemoteExecutor, dry_run: bool) -> Result<Strin
 
             // Full upgrade (handles new dependencies and removals)
             // Uses full-upgrade instead of upgrade to match what updatemon detects
-            let output = executor.execute_command(
+            executor.execute_command(
                 "/usr/bin/sudo",
                 &["DEBIAN_FRONTEND=noninteractive", "apt-get", "full-upgrade", "-y"]
             ).await?;
-
-            parse_apt_output(&output)
         }
         PackageManager::Dnf => {
-            let output = executor.execute_command(
+            executor.execute_command(
                 "/usr/bin/sudo",
                 &["dnf", "upgrade", "-y"]
             ).await?;
-
-            parse_dnf_output(&output)
         }
         PackageManager::Pacman => {
-            let output = executor.execute_command(
+            executor.execute_command(
                 "/usr/bin/sudo",
                 &["pacman", "-Syu", "--noconfirm"]
             ).await?;
-
-            parse_pacman_output(&output)
         }
     };
 
-    Ok(result)
+    // After update completes, verify by checking for remaining updates
+    let checker = get_checker(&pm);
+    let remaining = executor.check_updates(&checker).await?;
+
+    // Report actual status based on verification
+    if remaining.is_empty() {
+        Ok("✅ Up to date".to_string())
+    } else {
+        Ok(format!("⚠️ {} updates still available (may require reboot or manual intervention)", remaining.len()))
+    }
 }
 
 /// Update Docker images on a server
@@ -278,58 +281,3 @@ fn should_restart_container(container_name: &str, policy: &str, excluded: &[Stri
     }
 }
 
-/// Parse apt-get upgrade output to count updated packages
-fn parse_apt_output(output: &str) -> String {
-    // Look for line like "X upgraded, Y newly installed, Z to remove"
-    for line in output.lines() {
-        if line.contains("upgraded") {
-            let parts: Vec<&str> = line.split_whitespace().collect();
-            if let Some(count_str) = parts.first() {
-                if let Ok(count) = count_str.parse::<i32>() {
-                    if count > 0 {
-                        return format!("✅ {} packages upgraded", count);
-                    }
-                }
-            }
-        }
-    }
-
-    // Fallback if we can't parse
-    if output.contains("0 upgraded") {
-        "✅ Already up to date".to_string()
-    } else {
-        "✅ Upgrade completed".to_string()
-    }
-}
-
-/// Parse dnf upgrade output
-fn parse_dnf_output(output: &str) -> String {
-    // Look for "Complete!" or "Nothing to do"
-    if output.contains("Nothing to do") {
-        "✅ Already up to date".to_string()
-    } else if output.contains("Complete!") {
-        // Try to count upgraded packages
-        let count = output.lines()
-            .filter(|line| line.starts_with("Upgrading "))
-            .count();
-
-        if count > 0 {
-            format!("✅ {} packages upgraded", count)
-        } else {
-            "✅ Upgrade completed".to_string()
-        }
-    } else {
-        "✅ Upgrade completed".to_string()
-    }
-}
-
-/// Parse pacman update output
-fn parse_pacman_output(output: &str) -> String {
-    if output.contains("there is nothing to do") {
-        "✅ Already up to date".to_string()
-    } else if output.contains("Total Installed Size") || output.contains("Total Download Size") {
-        "✅ Upgrade completed".to_string()
-    } else {
-        "✅ Upgrade completed".to_string()
-    }
-}

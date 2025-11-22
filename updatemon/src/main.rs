@@ -38,6 +38,10 @@ struct Args {
     /// Suppress stdout output (Gotify only)
     #[arg(long, default_value_t = false)]
     quiet: bool,
+
+    /// Display summary in table format instead of detailed report
+    #[arg(long, default_value_t = false)]
+    summary: bool,
 }
 
 #[tokio::main]
@@ -132,7 +136,18 @@ async fn main() -> Result<()> {
     let details = all_reports.join("\n\n");
 
     if !args.quiet {
-        println!("\n{}", details);
+        if args.summary {
+            // Display table format
+            let summaries: Vec<ServerSummary> = all_reports.iter()
+                .zip(servers.iter())
+                .map(|(report, server)| parse_report_summary(report, server))
+                .collect();
+            let table = format_table(&summaries);
+            println!("\n{}", table);
+        } else {
+            // Display detailed format
+            println!("\n{}", details);
+        }
     }
 
     // Send to Gotify (if configured) - full details
@@ -305,4 +320,179 @@ fn format_summary(reports: &[String]) -> String {
     } else {
         format!("✅ All systems up to date ({} servers)", server_count)
     }
+}
+
+/// Data structure for summary table row
+struct ServerSummary {
+    name: String,
+    os_status: String,
+    docker_status: String,
+    notes: String,
+}
+
+/// Parse a report string into a ServerSummary
+fn parse_report_summary(report: &str, server: &Server) -> ServerSummary {
+    let mut os_status = "N/A".to_string();
+    let mut docker_status = "No Docker".to_string();
+
+    // Parse OS status from report
+    for line in report.lines() {
+        if line.contains("OS:") {
+            if line.contains("✅ Up to date") {
+                os_status = "✅ Up to date".to_string();
+            } else if line.contains("📦") {
+                // Extract number of updates (e.g., "OS: 📦 12 updates available")
+                if let Some(num_str) = line.split("📦").nth(1) {
+                    if let Some(num) = num_str.trim().split_whitespace().next() {
+                        os_status = format!("📦 {} available", num);
+                    }
+                }
+            }
+        }
+
+        if line.contains("Docker:") {
+            if line.contains("✅") {
+                // Extract total count (e.g., "Docker: ✅ 12 images up to date")
+                if let Some(parts) = line.split("✅").nth(1) {
+                    if let Some(num) = parts.trim().split_whitespace().next() {
+                        docker_status = format!("✅ {}/{}",num, num);
+                    }
+                }
+            } else if line.contains("🐳") {
+                // Extract updates/total (e.g., "Docker: 🐳 5 of 12 images with updates")
+                if let Some(parts) = line.split("🐳").nth(1) {
+                    let nums: Vec<&str> = parts.split_whitespace().collect();
+                    if nums.len() >= 4 {
+                        // Format: "X of Y images..."
+                        docker_status = format!("🐳 {}/{}", nums[0], nums[2]);
+                    }
+                }
+            } else if line.contains("No images found") {
+                docker_status = "No Docker".to_string();
+            }
+        }
+    }
+
+    // Determine notes based on server properties
+    let notes = if server.is_local() {
+        "Local server".to_string()
+    } else if let Some(ref ssh_host) = server.ssh_host {
+        // Try to classify based on hostname patterns
+        if ssh_host.contains("cloud") {
+            "Oracle Cloud".to_string()
+        } else if ssh_host.starts_with("root@") {
+            "Proxmox VE".to_string()
+        } else {
+            "Remote server".to_string()
+        }
+    } else {
+        "".to_string()
+    };
+
+    ServerSummary {
+        name: server.name.clone(),
+        os_status,
+        docker_status,
+        notes,
+    }
+}
+
+/// Format server summaries as a table
+fn format_table(summaries: &[ServerSummary]) -> String {
+    // Calculate column widths
+    let name_width = summaries.iter()
+        .map(|s| s.name.len())
+        .max()
+        .unwrap_or(10)
+        .max("Server".len());
+
+    let os_width = summaries.iter()
+        .map(|s| s.os_status.len())
+        .max()
+        .unwrap_or(12)
+        .max("OS Updates".len());
+
+    let docker_width = summaries.iter()
+        .map(|s| s.docker_status.len())
+        .max()
+        .unwrap_or(14)
+        .max("Docker Updates".len());
+
+    let notes_width = summaries.iter()
+        .map(|s| s.notes.len())
+        .max()
+        .unwrap_or(5)
+        .max("Notes".len());
+
+    let mut output = String::new();
+
+    // Header
+    output.push_str(&format!(
+        "{:<name_width$} | {:<os_width$} | {:<docker_width$} | {:<notes_width$}\n",
+        "Server", "OS Updates", "Docker Updates", "Notes",
+        name_width = name_width,
+        os_width = os_width,
+        docker_width = docker_width,
+        notes_width = notes_width
+    ));
+
+    // Separator
+    output.push_str(&format!(
+        "{:-<name_width$}-|-{:-<os_width$}-|-{:-<docker_width$}-|-{:-<notes_width$}\n",
+        "", "", "", "",
+        name_width = name_width,
+        os_width = os_width,
+        docker_width = docker_width,
+        notes_width = notes_width
+    ));
+
+    // Rows
+    for summary in summaries {
+        output.push_str(&format!(
+            "{:<name_width$} | {:<os_width$} | {:<docker_width$} | {:<notes_width$}\n",
+            summary.name,
+            summary.os_status,
+            summary.docker_status,
+            summary.notes,
+            name_width = name_width,
+            os_width = os_width,
+            docker_width = docker_width,
+            notes_width = notes_width
+        ));
+    }
+
+    // Calculate totals
+    let total_servers = summaries.len();
+    let total_os_updates: usize = summaries.iter()
+        .filter_map(|s| {
+            if s.os_status.contains("📦") {
+                s.os_status.split_whitespace()
+                    .nth(1)
+                    .and_then(|n| n.parse::<usize>().ok())
+            } else {
+                None
+            }
+        })
+        .sum();
+
+    let total_docker_images: usize = summaries.iter()
+        .filter_map(|s| {
+            if s.docker_status.contains("/") {
+                s.docker_status.split('/')
+                    .nth(1)
+                    .and_then(|n| n.trim().parse::<usize>().ok())
+            } else {
+                None
+            }
+        })
+        .sum();
+
+    // Footer with totals
+    output.push('\n');
+    output.push_str(&format!(
+        "Total: {} servers, {} packages pending, {} Docker images\n",
+        total_servers, total_os_updates, total_docker_images
+    ));
+
+    output
 }
