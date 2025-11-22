@@ -28,7 +28,9 @@ services:
       - .env
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock:ro
-      - ${HOME}/.ssh:/root/.ssh:ro
+      # SECURITY: Mount only the specific SSH key, not entire .ssh directory
+      # Set UPDATE_SSH_KEY in .env to the path of your key (e.g., /home/user/.ssh/id_ed25519)
+      - ${UPDATE_SSH_KEY}:/ssh/id_key:ro
     restart: "no"
 
   # Long-running runners so Ofelia can exec with full env inherited
@@ -55,7 +57,8 @@ services:
       - .env
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock:ro
-      - ${HOME}/.ssh:/root/.ssh:ro
+      # SECURITY: Mount only the specific SSH key, not entire .ssh directory
+      - ${UPDATE_SSH_KEY}:/ssh/id_key:ro
     entrypoint: ["/bin/sh", "-c", "sleep infinity"]
     restart: unless-stopped
 
@@ -66,7 +69,8 @@ services:
       - .env
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock:ro
-      - ${HOME}/.ssh:/root/.ssh:ro
+      # SECURITY: Mount only the specific SSH key, not entire .ssh directory
+      - ${UPDATE_SSH_KEY}:/ssh/id_key:ro
     entrypoint: ["/bin/sh", "-c", "sleep infinity"]
     restart: unless-stopped
 
@@ -77,7 +81,8 @@ services:
       - .env
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock:rw
-      - ${HOME}/.ssh:/root/.ssh:ro
+      # SECURITY: Mount only the specific SSH key, not entire .ssh directory
+      - ${UPDATE_SSH_KEY}:/ssh/id_key:ro
     entrypoint: ["/bin/sh", "-c", "sleep infinity"]
     restart: unless-stopped
 
@@ -88,7 +93,8 @@ services:
       - .env
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock:rw
-      - ${HOME}/.ssh:/root/.ssh:ro
+      # SECURITY: Mount only the specific SSH key, not entire .ssh directory
+      - ${UPDATE_SSH_KEY}:/ssh/id_key:ro
     entrypoint: ["/app/updatectl"]
     command: ["serve", "--port", "8080"]
     restart: unless-stopped

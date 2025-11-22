@@ -1,318 +1,366 @@
-**Weatherust**
+# Weatherust
 
-- Rust CLI that pulls current weather and 7-day outlook from OpenWeatherMap and optionally sends notifications via Gotify and/or ntfy.sh.
-- Supports ZIP or free-form location (e.g., "City,ST,US").
-- Designed to run non-interactively in Docker, scheduled by Ofelia (no host cron/systemd required).
+> Infrastructure monitoring and automation platform built with Rust
 
-**Quick Start**
+[![Rust](https://img.shields.io/badge/rust-1.90.0-orange.svg)](https://www.rust-lang.org/)
+[![Docker](https://img.shields.io/badge/docker-compose-blue.svg)](https://docs.docker.com/compose/)
+[![License](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
 
-- Copy env and fill keys: `cp .env.example .env` (set `OWM_API_KEY` and notification backend - see Notifications section below)
-- Start stack: `docker compose pull && docker compose up -d`
-- Verify scheduler: `docker compose logs -f ofelia`
-- Test once now: `docker compose run --rm weatherust` (uses `DEFAULT_*` from `.env`; add `--zip 52726 --units imperial` if not set)
+Weatherust is a comprehensive Rust-based monitoring and automation platform for infrastructure management, featuring weather monitoring, speed testing, health checks, and system updates across multiple servers.
 
+## 📋 Table of Contents
 
-**Prerequisites**
+- [Features](#features)
+- [Quick Start](#quick-start)
+- [Services](#services)
+- [Documentation](#documentation)
+- [Development](#development)
+- [Configuration](#configuration)
+- [Deployment](#deployment)
 
-- OpenWeatherMap API key (`OWM_API_KEY`).
-- Notification backend (choose one or both):
-  - **Gotify**: Server URL (`GOTIFY_URL`) and app keys (service-specific: `WEATHERUST_GOTIFY_KEY`, `UPDATEMON_GOTIFY_KEY`, etc.)
-  - **ntfy.sh**: Server URL (`NTFY_URL`, defaults to https://ntfy.sh) and topics (service-specific: `WEATHERUST_NTFY_TOPIC`, `UPDATEMON_NTFY_TOPIC`, etc.)
-- Toolchain: Rust 1.90.0 (pinned via `rust-toolchain.toml`).
+## ✨ Features
 
-**Local Run**
+- **🌤️ Weather Monitoring** - OpenWeatherMap integration with 7-day forecasts
+- **⚡ Speed Testing** - Ookla Speedtest CLI with threshold alerts
+- **🏥 Health Monitoring** - Docker container health and resource tracking
+- **📦 Update Monitoring** - Multi-server OS and Docker image update detection
+- **🔄 Update Automation** - Remote update application and cleanup operations
+- **🔔 Dual Notifications** - Gotify and ntfy.sh support with action buttons
+- **🐳 Docker-First** - Containerized services with Ofelia scheduling
+- **🔒 Security-Focused** - Constant-time comparisons, minimal key exposure
+- **📊 Observable** - Structured logging with tracing and metrics
 
-- Copy `.env.example` to `.env` and fill in keys (do not commit `.env`).
-- Build: `cargo build --release`
-- Examples:
-  - `./target/release/weatherust --zip 52726 --units imperial`
-  - `./target/release/weatherust --location "Davenport,IA,US" --units metric --quiet`
- - Note: Local runs are primarily for development and testing; production deployments should use the Docker + Ofelia stack below.
+## 🚀 Quick Start
 
-**Docker**
+### Prerequisites
 
-- Compose (preferred):
-  - Ensure `.env` exists with secrets.
-  - The stack uses `ghcr.io/jsprague84/weatherust:latest` by default. For production, pin a release tag (see below).
-  - Pull/update and start: `docker compose pull && docker compose up -d`
-  - Manual run (ad-hoc): `docker compose run --rm weatherust --zip 52726 --units imperial --quiet`
+- Docker and Docker Compose
+- OpenWeatherMap API key (for weather service)
+- Notification backend: Gotify and/or ntfy.sh
+- SSH key for remote server access (for update services)
 
-**Scheduling with Ofelia (in Docker)**
+### Installation
 
-- The compose stack includes an `ofelia` service that schedules a one-off run at 05:30 daily.
-- Defaults in compose:
-  - Location: ZIP `52726`, `--units imperial --quiet` passed as `command`.
-  - Timezone: `America/Chicago`.
-- Configure secrets in `.env` (same directory as compose):
-  - `OWM_API_KEY`, `GOTIFY_KEY`, `GOTIFY_URL`.
-  - Optional defaults: `DEFAULT_ZIP` or `DEFAULT_LOCATION`, and `DEFAULT_UNITS`.
-    - If CLI flags are omitted, the app uses these defaults; `DEFAULT_ZIP` takes precedence over `DEFAULT_LOCATION`.
-- How env is passed to the job:
-  - Ofelia job-run does not inherit the service’s `env_file`.
-  - We mount your host `.env` into the Ofelia service at `/ofelia/.env` and use the label `ofelia.job-run.<name>.env-file=/ofelia/.env` so the job container receives all variables.
-  - Set `ENV_FILE_HOST_PATH` in `.env` to the absolute host path of your `.env` file (used by the Ofelia service volume).
-- Start the stack:
-  - `docker compose up -d`
-- Logs:
-  - `docker compose logs -f ofelia` (shows job runs and any errors)
+1. **Clone and configure**:
+   ```bash
+   git clone https://github.com/jsprague84/weatherust.git
+   cd weatherust
+   cp .env.example .env
+   ```
 
-Adjusting schedule:
-- The schedule is defined as a label on the `ofelia` service in `docker-compose.yml`:
-  - `ofelia.job-run.weatherust.schedule: "0 30 5 * * *"` (sec min hour day month weekday)
-- Update it as needed and re-run `docker compose up -d`.
+2. **Edit `.env`** and configure:
+   ```bash
+   # OpenWeatherMap
+   OWM_API_KEY=your_api_key
 
-**GitHub / CI**
+   # Notifications (choose one or both)
+   GOTIFY_URL=https://gotify.example.com/message
+   WEATHERUST_GOTIFY_KEY=your_token
 
-- This repo includes `.github/workflows/docker.yml` to build and publish a multi-arch Docker image to GHCR.
-- Steps:
-  - Push to `main` to publish `ghcr.io/jsprague84/weatherust:latest`.
-  - Create a tag like `v0.1.0` to also publish `ghcr.io/jsprague84/weatherust:v0.1.0`.
-  - Branch/PR builds publish testing tags so you can pull pre-merge images:
-    - `:feature-branch-name` (branch name slugified)
-    - `:pr-<number>` (on PRs)
-    - `:sha-<short>` (commit SHA)
-  - docker-compose supports overriding tags via `.env`:
-    - `WEATHERUST_TAG` and `SPEEDYNOTIFY_TAG` (see `.env.example`).
-  - If the GHCR package is private, configure a registry login on the host running compose.
+   # OR/AND
+   NTFY_URL=https://ntfy.sh
+   WEATHERUST_NTFY_TOPIC=weather
 
-**Releases, Pinning, and Pre‑Merge Testing**
+   # SSH for remote operations
+   UPDATE_SSH_KEY=/home/user/.ssh/id_ed25519
+   UPDATE_SERVERS=server1:user@host1,server2:user@host2
+   ```
 
-- Recommended for stability: pin to a published release tag instead of `latest`.
-- For pre‑merge testing, set env overrides in `.env`:
-  - `WEATHERUST_TAG=feature-feature-scaffold`
-  - `SPEEDYNOTIFY_TAG=feature-feature-scaffold`
-  - Then: `docker compose pull && docker compose up -d`
-  - Unset the overrides (or set to a release tag) after testing.
+3. **Start the stack**:
+   ```bash
+   docker compose pull
+   docker compose up -d
+   ```
 
-**Notes**
+4. **Verify**:
+   ```bash
+   docker compose logs -f ofelia
+   docker compose ps
+   ```
 
-- Runtime image is distroless (cc variant) on Debian 12, running as non-root, which includes required libgcc runtime.
-- Toolchain pinned to Rust 1.90.0 for reproducible builds.
-
-**Notifications**
-
-All services support two notification backends: **Gotify** and **ntfy.sh**. You can use one or both simultaneously.
-
-**Gotify Configuration**
-
-Gotify is a self-hosted notification server. Each service checks for its own service-specific key:
+### Test Individual Services
 
 ```bash
-# Gotify server URL (shared by all services)
-GOTIFY_URL=https://gotify.example.com/message
+# Weather check
+docker compose run --rm weatherust --zip 52726 --units imperial
 
-# Service-specific Gotify app tokens
-WEATHERUST_GOTIFY_KEY=your_weatherust_token
-UPDATEMON_GOTIFY_KEY=your_updatemon_token
-UPDATECTL_GOTIFY_KEY=your_updatectl_token
-HEALTHMON_GOTIFY_KEY=your_healthmon_token
-SPEEDY_GOTIFY_KEY=your_speedynotify_token
+# Speed test
+docker compose run --rm speedynotify
+
+# Health check
+docker compose exec healthmon_runner /app/healthmon health
+
+# Update monitor
+docker compose exec updatemon_runner /app/updatemon --docker --local
+
+# Update controller (list servers)
+docker compose exec updatectl_runner /app/updatectl list servers
 ```
 
-Setup options:
-- **Simple**: Use the same token for all services (all notifications in one Gotify app)
-- **Organized**: Create separate Gotify apps and tokens for each service
+## 🛠️ Services
 
-Optional:
-- `GOTIFY_KEY_FILE=/run/secrets/gotify_key` - Path to file containing token (fallback if service key not set)
-- `GOTIFY_DEBUG=true` - Enable debug logging (masks token, shows URL/message lengths)
+### Monitoring Services (Read-Only)
 
-**ntfy.sh Configuration**
+| Service | Purpose | Schedule | Details |
+|---------|---------|----------|---------|
+| **weatherust** | Weather monitoring | Daily 05:30 | [README](./README.md#weatherust) |
+| **speedynotify** | Internet speed tests | Daily 02:10 | Threshold alerts |
+| **healthmon** | Container health | Every 5 min | CPU/MEM monitoring |
+| **updatemon** | Update detection | Daily 03:00 | [README](./updatemon/README.md) |
 
-ntfy.sh is an open-source notification service supporting action buttons. Each service publishes to its own topic:
+### Action Services (Write Operations)
+
+| Service | Purpose | Access | Details |
+|---------|---------|--------|---------|
+| **updatectl** | Update controller | CLI + Webhook | [README](./updatectl/README.md) |
+| **updatectl_webhook** | HTTP API | Port 8080 | [API Docs](./docs/reference/WEBHOOK_API.md) |
+
+## 📚 Documentation
+
+### For Users
+
+- **[README.md](./README.md)** (full) - Complete user documentation
+- **[updatectl/README.md](./updatectl/README.md)** - Update controller guide
+- **[updatemon/README.md](./updatemon/README.md)** - Update monitor guide
+- **[Webhook API](./docs/reference/WEBHOOK_API.md)** - Webhook API reference
+- **[CLI Commands](./docs/reference/CLI-COMMANDS.md)** - Command reference
+
+### For Developers
+
+- **[CLAUDE.md](./CLAUDE.md)** - Quick reference for AI assistants
+- **[Claude Code Guide](./docs/development/CLAUDE_CODE_GUIDE.md)** - **START HERE** - Comprehensive development guide
+- **[Architecture](./docs/architecture/ARCHITECTURE.md)** - System architecture and design
+- **[Contributing](./docs/development/CONTRIBUTING.md)** - Development workflow and standards
+- **[Modernization Summary](./docs/development/MODERNIZATION_SUMMARY.md)** - Recent improvements
+- **[Code Examples](./docs/development/MODERNIZATION_EXAMPLES.md)** - Code examples
+- **[Documentation Index](./docs/README.md)** - Complete documentation navigation
+
+## 💻 Development
+
+### Local Development
 
 ```bash
-# ntfy server URL (defaults to https://ntfy.sh if not set)
-NTFY_URL=https://ntfy.js-node.com
+# Build
+cargo build --workspace
 
-# Optional: Authentication token for self-hosted ntfy servers
-NTFY_AUTH=your_ntfy_auth_token
+# Test
+cargo test --workspace
 
-# Service-specific ntfy topics
-WEATHERUST_NTFY_TOPIC=weatherust
+# Run specific service
+cargo run --bin updatectl -- list servers
+
+# Format and lint
+cargo fmt --all
+cargo clippy --workspace -- -D warnings
+```
+
+### Docker Build
+
+```bash
+# Build all services
+docker build -t weatherust:local .
+docker build -f Dockerfile.updatectl -t updatectl:local .
+docker build -f Dockerfile.healthmon -t healthmon:local .
+```
+
+### Documentation
+
+```bash
+# Generate API docs
+cargo doc --open
+```
+
+For detailed development instructions, see [CONTRIBUTING.md](./docs/development/CONTRIBUTING.md).
+
+## ⚙️ Configuration
+
+### Notification Backends
+
+#### Gotify (Self-Hosted)
+
+```bash
+GOTIFY_URL=https://gotify.example.com/message
+
+# Service-specific tokens
+WEATHERUST_GOTIFY_KEY=token1
+UPDATEMON_GOTIFY_KEY=token2
+UPDATECTL_GOTIFY_KEY=token3
+HEALTHMON_GOTIFY_KEY=token4
+SPEEDY_GOTIFY_KEY=token5
+```
+
+#### ntfy.sh (Public or Self-Hosted)
+
+```bash
+NTFY_URL=https://ntfy.sh  # or your server
+NTFY_AUTH=token  # optional for self-hosted
+
+# Service-specific topics
+WEATHERUST_NTFY_TOPIC=weather
 UPDATEMON_NTFY_TOPIC=updates
 UPDATECTL_NTFY_TOPIC=update-actions
 HEALTHMON_NTFY_TOPIC=docker-health
 SPEEDY_NTFY_TOPIC=speedtest
 ```
 
-Setup options:
-- **Simple**: Use the same topic for all services (all notifications in one feed)
-- **Organized**: Use different topics per service for separate notification feeds
+### Server Configuration
 
-Optional:
-- `NTFY_DEBUG=true` - Enable debug logging (masks token, shows URL/topic/message lengths)
-
-**Using Both Backends**
-
-Services will send to both Gotify and ntfy if both are configured. Errors in one backend don't affect the other. If a service-specific key/topic is not set, that backend is silently skipped for that service.
-
-Example (dual configuration in `.env`):
 ```bash
-# Both backends active
-GOTIFY_URL=https://gotify.example.com/message
-WEATHERUST_GOTIFY_KEY=gotify_token_here
-NTFY_URL=https://ntfy.js-node.com
-WEATHERUST_NTFY_TOPIC=weather-alerts
+# Format: name:user@host or user@host
+UPDATE_SERVERS=Office-WS:user@192.168.1.10,Cloud-VM:user@remote.com
+
+# SSH key (only this key is mounted to containers)
+UPDATE_SSH_KEY=/home/user/.ssh/id_ed25519
+
+# Local server name (optional)
+UPDATE_LOCAL_NAME=docker-vm
 ```
 
-**Security/Secrets**
+### Schedule Customization
 
-- `.env` is gitignored. Do not commit real API tokens or ntfy auth tokens.
-- Rotate tokens if they were ever exposed.
-- See the **Notifications** section above for detailed configuration of Gotify and ntfy.sh backends.
-- Each service checks for its own service-specific key/topic (e.g., `WEATHERUST_GOTIFY_KEY`, `UPDATEMON_NTFY_TOPIC`).
+Edit `docker-compose.yml` Ofelia labels:
 
-Example (Docker secrets-style mounting for Gotify):
-- Create a file with only the key, e.g., `/opt/secrets/gotify_key`.
-- Mount it into the job container and set `GOTIFY_KEY_FILE` via Ofelia labels:
-  - `ofelia.job-run.weatherust.volume=/opt/secrets/gotify_key:/run/secrets/gotify_key:ro`
-  - `ofelia.job-run.weatherust.env=GOTIFY_KEY_FILE=/run/secrets/gotify_key|...`
-
-**CLI Reference**
-
-- Flags:
-  - `--zip <ZIP[,CC]>` e.g., `52726` or `52726,US`.
-  - `--location <free-form>` e.g., `Davenport,IA,US`.
-  - `--units <imperial|metric>` (default `DEFAULT_UNITS` or `imperial`).
-  - `--quiet` suppresses stdout (useful in scheduled runs).
-
-Environment defaults:
-- `DEFAULT_ZIP` or `DEFAULT_LOCATION` provide a default location when CLI flags are not set.
-- `DEFAULT_UNITS` sets default units when `--units` is not specified.
-- If neither CLI nor env provide a location, the app prompts interactively.
-
-**Ideas for Future Enhancements**
-
-- Resilience: retry/backoff for transient HTTP errors; clearer non-zero exit on fatal failures (for monitoring).
-- Severe weather: optional alert mode (high Gotify priority) if daily description matches severe conditions.
-- Config: accept defaults via env (e.g., `DEFAULT_ZIP`, `DEFAULT_UNITS`) to reduce args in compose labels.
-- Output: compact vs verbose templates; optional emoji/icons; configurable Gotify priority/title.
-- Multi-location: support multiple ZIPs/locations in one run with aggregated message.
-- Logging/metrics: structured logs and a simple success/failure metric (stdout) for scraping.
-- Tests/CI: add unit tests around parsing/formatting and a lint step in Actions.
-
-**Additional Tools (Workspace)**
-
-This repo is now a Rust workspace with a shared helper crate. A second binary, `speedynotify`, runs the Ookla Speedtest CLI and sends notifications via Gotify and/or ntfy.sh.
-
-Added: `healthmon` (renamed from `dockermon`) — checks Docker containers for health issues and high CPU/MEM and sends notifications via Gotify and/or ntfy.sh. Designed for Ofelia to run every 5 minutes. It uses Ofelia's `env-file` label for reliable environment passing.
-
-- Enable in compose:
-  - Image: `ghcr.io/jsprague84/speedynotify:latest` (publish separately).
-  - Ofelia labels included for a daily run at 02:10.
-  - Configure thresholds in `.env`: `SPEEDTEST_MIN_DOWN`, `SPEEDTEST_MIN_UP`, optional `SPEEDTEST_SERVER_ID`.
-  - Reuses the same `GOTIFY_*` envs and `.env` mount via `ENV_FILE_HOST_PATH`.
-
-Build locally:
-- Weather: `docker build -t weatherust:local .`
-- Speedtest: `docker build -f Dockerfile.speedynotify -t speedynotify:local .`
-- Health monitor: `docker build -f Dockerfile.healthmon -t healthmon:local .`
-
-Publish images (CI):
-- All images are built by `.github/workflows/build-all-services.yml` in parallel
-- Images published: weatherust, speedynotify, healthmon, updatemon, updatectl
-- Push to `main` publishes `latest` tags, push tags like `v1.0.0` for versioned releases
-- After first successful publish, make the GHCR packages public in GitHub Packages so compose hosts can pull without auth.
-
-**Scaffolding New Features**
-
-- To create another small feature that sends messages to Gotify, use the scaffold:
-  - `scripts/scaffold_feature.sh <name> "Short description"`
-  - Then implement `<name>/src/main.rs`, and adjust `Dockerfile.<name>` if OS deps are needed.
-  - A GitHub Action is generated at `.github/workflows/docker-<name>.yml` to publish `ghcr.io/<owner>/<name>`.
-  - See `FEATURES.md` for details and the Ofelia label pattern to schedule your new image.
-
-**Health Monitor (healthmon)**
-
-healthmon (formerly `dockermon`) monitors Docker container health and resource usage. After refactoring, **all Docker cleanup functionality has been moved to updatectl**.
-
-- Purpose: Alert when any container is not running, has failing health, or exceeds CPU/MEM thresholds.
-- Env:
-  - `HEALTH_NOTIFY_ALWAYS` (default `false`) — notify even when all OK.
-  - `CPU_WARN_PCT` (default `85`) — CPU percentage threshold.
-  - `MEM_WARN_PCT` (default `90`) — memory percentage threshold.
-  - `HEALTHMON_GOTIFY_KEY` (optional) — Gotify token for this service.
-  - `HEALTHMON_NTFY_TOPIC` (optional) — ntfy.sh topic for this service.
-  - `GOTIFY_DEBUG` / `NTFY_DEBUG` (optional) — set to `true`/`1` to print debug info in logs.
-  - `HEALTHMON_IGNORE` (optional) — comma-separated list of container names/IDs/service names to skip (case-insensitive).
-- Compose integration:
-  - Service mounts the Docker socket read-only.
-- Tag override: set `HEALTHMON_TAG` in `.env` for pre-merge testing.
-
-Runtime pattern (robust):
-- This compose keeps a lightweight `healthmon_runner` container (same image, entrypoint overridden to `sleep infinity`) alive so Ofelia can `job-exec` into it and automatically inherit the full `.env` plus socket mount. Use the `HEALTHMON_IGNORE` env (or `--ignore` CLI flag) to suppress noise from short-lived containers (e.g., the one-off weather/speedy jobs).
-  - `ofelia.job-exec.healthmon-health.container=healthmon_runner`
-  - `ofelia.job-exec.healthmon-health.command=/app/healthmon health --quiet`
-
-For Docker cleanup operations, see **updatectl** below.
-
-**Update Monitor (updatemon) & Update Controller (updatectl)**
-
-Two companion tools for managing updates and cleanup across your infrastructure:
-
-**updatemon** - Multi-server update monitoring (read-only)
-- Checks OS packages (apt/dnf/pacman) and Docker images for available updates
-- Parallel execution across multiple servers via SSH
-- Notifications via Gotify and/or ntfy.sh with detailed update summaries
-- Runs daily (3:00 AM) to keep you informed
-- Safe for automation - never modifies anything
-- [Full documentation](updatemon/README.md)
-
-**updatectl** - Multi-server update controller & cleanup tool (applies changes)
-- **OS Updates**: Apply package updates across servers (apt/dnf/pacman)
-- **Docker Updates**: Pull updated Docker images across servers
-- **Docker Cleanup**: Clean up dangling images, unused networks, old containers, build cache
-- **OS Cleanup**: Clean package cache and remove unused packages (apt clean/autoremove)
-- Server name resolution for easy CLI usage
-- Interactive confirmation prompts (skip with `--yes` for automation)
-- Dry-run mode to preview changes before applying
-- Parallel execution with error isolation per server
-- Discovery commands: `list servers`, `list examples`
-- Automated updates via Ofelia (disabled by default for safety)
-- [Full documentation](updatectl/README.md)
-
-Configuration (shared between both tools):
-```bash
-# Server list (format: name:user@host or just user@host)
-UPDATE_SERVERS=Office-HP-WS:jsprague@192.168.1.189,Cloud VM1:ubuntu@cloud-vm1.js-node.com
-
-# SSH key for passwordless authentication
-UPDATE_SSH_KEY=/home/ubuntu/.ssh/id_ed25519
-
-# Notification backends (choose Gotify, ntfy.sh, or both)
-UPDATEMON_GOTIFY_KEY=your_updatemon_token
-UPDATEMON_NTFY_TOPIC=updates
-UPDATECTL_GOTIFY_KEY=your_updatectl_token
-UPDATECTL_NTFY_TOPIC=update-actions
+```yaml
+# Example: Run weatherust at 06:00 instead of 05:30
+ofelia.job-exec.weatherust.schedule: "0 0 6 * * *"
 ```
 
-Quick start:
+Cron format: `second minute hour day month weekday`
+
+## 🚢 Deployment
+
+### Production Deployment
+
+1. **Pin versions** in `.env`:
+   ```bash
+   WEATHERUST_TAG=v1.0.0
+   UPDATECTL_TAG=v1.0.0
+   HEALTHMON_TAG=v1.0.0
+   UPDATEMON_TAG=v1.0.0
+   SPEEDYNOTIFY_TAG=v1.0.0
+   ```
+
+2. **Configure secrets** properly (see [Security](#security))
+
+3. **Deploy**:
+   ```bash
+   docker compose pull
+   docker compose up -d
+   ```
+
+### Security Best Practices
+
+✅ **DO**:
+- Mount only specific SSH key (`UPDATE_SSH_KEY`)
+- Use service-specific notification tokens
+- Pin Docker image versions for production
+- Rotate secrets periodically
+- Enable `--dry-run` for testing
+
+❌ **DON'T**:
+- Mount entire `.ssh` directory
+- Commit `.env` file
+- Use `latest` tag in production
+- Share secrets between environments
+
+### Monitoring
+
 ```bash
-# Set up shell alias for easy CLI usage (recommended)
-echo 'alias updatectl="docker compose -f ~/docker-compose/weatherust/docker-compose.yml exec updatectl_runner /app/updatectl"' >> ~/.bashrc
-source ~/.bashrc
+# View logs
+docker compose logs -f
 
-# List configured servers
-updatectl list servers
+# Check service status
+docker compose ps
 
-# Check for updates on all servers (automated daily)
-docker compose exec updatemon_runner /app/updatemon --docker
+# View Ofelia schedule
+docker compose logs ofelia
 
-# Preview what would be updated on localhost (safe)
-updatectl all --dry-run --local
-
-# Apply updates to specific server
-updatectl os --yes --servers "Cloud VM1"
-
-# Update Docker images on localhost only
-updatectl docker --all --yes --local
-
-# Update all configured servers
-updatectl os --yes
+# Check specific service
+docker compose logs -f updatectl_webhook
 ```
 
-Workflow:
-1. updatemon runs daily (automated) → sends Gotify notifications
-2. Review notifications to see what needs updating
-3. Run updatectl manually to apply updates (or enable automated schedule)
+## 🏗️ Architecture
+
+```
+┌─────────────────────────────────────────┐
+│          Ofelia Scheduler               │
+│         (Cron-like for Docker)          │
+└────┬────┬────┬────┬────────────────────┘
+     │    │    │    │
+     ▼    ▼    ▼    ▼
+┌────────────────────────────────────────┐
+│  weatherust  speedynotify  healthmon   │
+│  updatemon                             │
+└────┬───────────────────────────────────┘
+     │
+     ▼
+┌────────────────────────────────────────┐
+│   Notifications (Gotify / ntfy.sh)     │
+└────────────────────────────────────────┘
+
+     ┌──────────────┐    ┌──────────────┐
+     │  updatectl   │    │  updatectl   │
+     │   (CLI)      │    │  (Webhook)   │
+     └──────┬───────┘    └──────┬───────┘
+            │                   │
+            └─────────┬─────────┘
+                      ▼
+              ┌───────────────┐
+              │ Remote Servers│
+              │    via SSH    │
+              └───────────────┘
+```
+
+For detailed architecture, see [ARCHITECTURE.md](./docs/architecture/ARCHITECTURE.md).
+
+## 🔧 Workspace Structure
+
+```
+weatherust/
+├── common/             # Shared library
+│   ├── error.rs       # Structured error types
+│   ├── constants.rs   # Configuration constants
+│   ├── security.rs    # Security utilities
+│   ├── retry.rs       # Retry logic
+│   └── ...
+├── weatherust/        # Weather monitoring
+├── speedynotify/      # Speed testing
+├── healthmon/         # Health monitoring
+├── updatemon/         # Update monitoring
+└── updatectl/         # Update controller
+```
+
+## 🤝 Contributing
+
+We welcome contributions! Please see [CONTRIBUTING.md](./docs/development/CONTRIBUTING.md) for guidelines.
+
+### Quick Contribution Guide
+
+1. Fork the repository
+2. Create a feature branch (`git checkout -b feature/amazing-feature`)
+3. Make your changes following our [code standards](./docs/development/CONTRIBUTING.md#code-standards)
+4. Test thoroughly (`cargo test --workspace`)
+5. Commit using [conventional commits](./docs/development/CONTRIBUTING.md#conventional-commits)
+6. Push and create a Pull Request
+
+## 📝 License
+
+This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
+
+## 🙏 Acknowledgments
+
+- [OpenWeatherMap](https://openweathermap.org/) - Weather data API
+- [Ookla Speedtest](https://www.speedtest.net/apps/cli) - Speed test CLI
+- [Ofelia](https://github.com/mcuadros/ofelia) - Docker job scheduler
+- [Gotify](https://gotify.net/) - Self-hosted notification server
+- [ntfy.sh](https://ntfy.sh/) - Open-source notification service
+
+## 🆘 Support
+
+- **Documentation**: Check the [docs](#documentation) section
+- **Issues**: [GitHub Issues](https://github.com/jsprague84/weatherust/issues)
+- **Discussions**: [GitHub Discussions](https://github.com/jsprague84/weatherust/discussions)
+
+---
+
+**Note**: For detailed user documentation including all configuration options, troubleshooting, and examples, see the full [README.md](./README.md).

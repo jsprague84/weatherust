@@ -11,9 +11,23 @@ dotenvy = "0.15"
 anyhow = "1.0"
 tokio = { version = "1", features = ["process", "time"] }
 
+# error handling
+thiserror = "1.0"
+backon = "1.3"
+
 # logging & observability
 tracing = "0.1"
 metrics = "0.23"
+
+# security
+subtle = "2.6"
+
+# docker (optional, for error types)
+bollard = { version = "0.16", optional = true }
+
+[features]
+default = []
+docker = ["bollard"]
 
 [dev-dependencies]
 tokio = { version = "1", features = ["full"] }

@@ -2,13 +2,26 @@ use anyhow::{anyhow, Result};
 use dotenvy::dotenv;
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
-use std::env;
-use tracing::{debug, warn};
+use std::env as std_env;
+use tracing::{debug, warn, instrument};
 
+use crate::constants::env as env_keys;
+
+// Public modules
+pub mod error;
+pub mod constants;
 pub mod executor;
-pub use executor::RemoteExecutor;
-
 pub mod metrics;
+pub mod security;
+pub mod retry;
+
+// Re-exports
+pub use error::{
+    AppError, NotificationError, RemoteExecutionError, DockerError,
+    ServerConfigError, UpdateError, WebhookError, HealthCheckError,
+};
+pub use executor::RemoteExecutor;
+pub use constants::*;
 
 pub fn dotenv_init() {
     let _ = dotenv();
@@ -78,6 +91,7 @@ pub async fn send_gotify_updatectl(
 }
 
 // Internal helper: checks a specific key, then GOTIFY_KEY_FILE fallback
+#[instrument(skip(client, body), fields(service = %key_var, body_len = body.len()))]
 async fn send_gotify_with_key(
     client: &Client,
     title: &str,
@@ -85,13 +99,13 @@ async fn send_gotify_with_key(
     key_var: &str,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let gotify_url =
-        env::var("GOTIFY_URL").unwrap_or_else(|_| "http://localhost:8080/message".to_string());
+        std_env::var(env_keys::GOTIFY_URL).unwrap_or_else(|_| "http://localhost:8080/message".to_string());
 
     // Resolve key with precedence:
     // 1) Specific key (e.g., WEATHERUST_GOTIFY_KEY)
     // 2) GOTIFY_KEY_FILE (file-based fallback)
     let mut key_source = "";
-    let gotify_key = if let Ok(v) = env::var(key_var) {
+    let gotify_key = if let Ok(v) = std_env::var(key_var) {
         let v = v.trim().to_string();
         if !v.is_empty() {
             key_source = key_var;
@@ -99,10 +113,10 @@ async fn send_gotify_with_key(
         } else {
             String::new()
         }
-    } else if let Ok(path) = env::var("GOTIFY_KEY_FILE") {
+    } else if let Ok(path) = std_env::var(env_keys::GOTIFY_KEY_FILE) {
         match std::fs::read_to_string(&path) {
             Ok(s) => {
-                key_source = "GOTIFY_KEY_FILE";
+                key_source = env_keys::GOTIFY_KEY_FILE;
                 s.trim().to_string()
             }
             Err(e) => {
@@ -120,15 +134,15 @@ async fn send_gotify_with_key(
     }
 
     // Optional debug output (mask token)
-    let debug = env::var("GOTIFY_DEBUG")
+    let debug = std_env::var(env_keys::GOTIFY_DEBUG)
         .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
         .unwrap_or(false);
     if debug {
-        let masked: String = if gotify_key.len() > 6 {
+        let masked: String = if gotify_key.len() > TOKEN_MIN_LENGTH_FOR_MASKING {
             format!(
                 "{}***{}",
-                &gotify_key[..3],
-                &gotify_key[gotify_key.len() - 3..]
+                &gotify_key[..TOKEN_MASK_PREFIX_LEN],
+                &gotify_key[gotify_key.len() - TOKEN_MASK_SUFFIX_LEN..]
             )
         } else {
             "***".to_string()
@@ -149,7 +163,7 @@ async fn send_gotify_with_key(
         .json(&serde_json::json!({
             "title": title,
             "message": body,
-            "priority": 5
+            "priority": GOTIFY_DEFAULT_PRIORITY
         }))
         .send()
         .await?
@@ -276,6 +290,7 @@ pub async fn send_ntfy_updatectl(
 }
 
 // Internal helper: send ntfy notification with optional actions
+#[instrument(skip(client, body, actions), fields(service = %topic_var, body_len = body.len()))]
 async fn send_ntfy_with_topic(
     client: &Client,
     title: &str,
@@ -284,11 +299,11 @@ async fn send_ntfy_with_topic(
     actions: Option<Vec<NtfyAction>>,
 ) -> Result<(), Box<dyn std::error::Error>> {
     // Get ntfy server URL
-    let ntfy_url = env::var("NTFY_URL")
+    let ntfy_url = std_env::var(env_keys::NTFY_URL)
         .unwrap_or_else(|_| "https://ntfy.sh".to_string());
 
     // Get topic for this service
-    let topic = match env::var(topic_var) {
+    let topic = match std_env::var(topic_var) {
         Ok(t) if !t.trim().is_empty() => t.trim().to_string(),
         _ => {
             // ntfy not configured for this service - skip silently
@@ -297,10 +312,10 @@ async fn send_ntfy_with_topic(
     };
 
     // Get optional auth token
-    let auth_token = env::var("NTFY_AUTH").ok();
+    let auth_token = std_env::var(env_keys::NTFY_AUTH).ok();
 
     // Optional debug output
-    let debug = env::var("NTFY_DEBUG")
+    let debug = std_env::var(env_keys::NTFY_DEBUG)
         .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
         .unwrap_or(false);
 
@@ -320,7 +335,7 @@ async fn send_ntfy_with_topic(
         "topic": topic,
         "title": title,
         "message": body,
-        "priority": 4,
+        "priority": NTFY_DEFAULT_PRIORITY,
         "markdown": true,
     });
 
@@ -374,7 +389,7 @@ pub struct Server {
 impl Server {
     /// Create a local server instance with optional custom name
     pub fn local() -> Self {
-        let name = std::env::var("UPDATE_LOCAL_NAME")
+        let name = std_env::var(env_keys::UPDATE_LOCAL_NAME)
             .unwrap_or_else(|_| "localhost".to_string());
 
         Server {
@@ -439,7 +454,7 @@ impl Server {
     pub fn display_host(&self) -> String {
         if self.is_local() {
             // Check for custom localhost display
-            std::env::var("UPDATE_LOCAL_DISPLAY")
+            std_env::var(env_keys::UPDATE_LOCAL_DISPLAY)
                 .unwrap_or_else(|_| "local".to_string())
         } else {
             self.ssh_host.clone().unwrap()
