@@ -60,6 +60,8 @@ pub async fn serve_webhooks(
         .route("/webhook/update/docker/image", post(handle_docker_image_update))
         .route("/webhook/cleanup/safe", post(handle_cleanup_safe))
         .route("/webhook/cleanup/images/prune-unused", post(handle_cleanup_prune_unused))
+        .route("/webhook/os/clean-cache", post(handle_os_clean_cache))
+        .route("/webhook/os/autoremove", post(handle_os_autoremove))
         .route("/health", axum::routing::get(health_check))
         .layer(TraceLayer::new_for_http())
         .with_state(state);
@@ -72,6 +74,8 @@ pub async fn serve_webhooks(
     println!("  POST /webhook/update/docker/image?server=<name>&image=<image>&token=<secret>");
     println!("  POST /webhook/cleanup/safe?server=<name>&token=<secret>");
     println!("  POST /webhook/cleanup/images/prune-unused?server=<name>&token=<secret>");
+    println!("  POST /webhook/os/clean-cache?server=<name>&token=<secret>");
+    println!("  POST /webhook/os/autoremove?server=<name>&token=<secret>");
     println!("  GET  /health");
 
     let listener = tokio::net::TcpListener::bind(addr).await?;
@@ -511,5 +515,148 @@ fn parse_docker_size_str(size_str: &str) -> u64 {
         (num * multiplier as f64) as u64
     } else {
         0
+    }
+}
+
+async fn handle_os_clean_cache(
+    State(state): State<Arc<WebhookState>>,
+    Query(params): Query<CleanupQuery>,
+) -> impl IntoResponse {
+    if params.token != state.secret {
+        log::warn!("Invalid webhook token for OS cache cleanup");
+        return (StatusCode::UNAUTHORIZED, "Invalid token".to_string());
+    }
+
+    // Get server from registry
+    let server = match state.servers.get(&params.server) {
+        Some(s) => s.clone(),
+        None => {
+            log::error!("Unknown server: {}", params.server);
+            return (StatusCode::BAD_REQUEST, format!("Unknown server: {}", params.server));
+        }
+    };
+
+    log::info!("Webhook triggered: OS cache cleanup for {}", server.name);
+
+    let ssh_key = state.ssh_key.clone();
+    let client = state.client.clone();
+    tokio::spawn(async move {
+        let (title, message) = match execute_os_clean_cache_for_server(&server, ssh_key.as_deref()).await {
+            Ok(msg) => {
+                log::info!("OS cache cleanup completed: {}", msg);
+                (
+                    format!("{} - OS Cleanup: Cache cleaned", server.name),
+                    format!("✅ {}", msg)
+                )
+            }
+            Err(e) => {
+                log::error!("OS cache cleanup failed: {}", e);
+                (
+                    format!("{} - OS Cleanup: Cache cleanup failed", server.name),
+                    format!("❌ Error: {}", e)
+                )
+            }
+        };
+
+        // Send notification (both Gotify and ntfy if configured)
+        if let Err(e) = send_gotify_updatectl(&client, &title, &message).await {
+            log::warn!("Failed to send Gotify notification: {}", e);
+        }
+        if let Err(e) = send_ntfy_updatectl(&client, &title, &message, None).await {
+            log::warn!("Failed to send ntfy notification: {}", e);
+        }
+    });
+
+    (StatusCode::ACCEPTED, format!("OS cache cleanup started for {}", params.server))
+}
+
+async fn handle_os_autoremove(
+    State(state): State<Arc<WebhookState>>,
+    Query(params): Query<CleanupQuery>,
+) -> impl IntoResponse {
+    if params.token != state.secret {
+        log::warn!("Invalid webhook token for OS autoremove");
+        return (StatusCode::UNAUTHORIZED, "Invalid token".to_string());
+    }
+
+    // Get server from registry
+    let server = match state.servers.get(&params.server) {
+        Some(s) => s.clone(),
+        None => {
+            log::error!("Unknown server: {}", params.server);
+            return (StatusCode::BAD_REQUEST, format!("Unknown server: {}", params.server));
+        }
+    };
+
+    log::info!("Webhook triggered: OS autoremove for {}", server.name);
+
+    let ssh_key = state.ssh_key.clone();
+    let client = state.client.clone();
+    tokio::spawn(async move {
+        let (title, message) = match execute_os_autoremove_for_server(&server, ssh_key.as_deref()).await {
+            Ok(msg) => {
+                log::info!("OS autoremove completed: {}", msg);
+                (
+                    format!("{} - OS Cleanup: Autoremove complete", server.name),
+                    format!("✅ {}", msg)
+                )
+            }
+            Err(e) => {
+                log::error!("OS autoremove failed: {}", e);
+                (
+                    format!("{} - OS Cleanup: Autoremove failed", server.name),
+                    format!("❌ Error: {}", e)
+                )
+            }
+        };
+
+        // Send notification (both Gotify and ntfy if configured)
+        if let Err(e) = send_gotify_updatectl(&client, &title, &message).await {
+            log::warn!("Failed to send Gotify notification: {}", e);
+        }
+        if let Err(e) = send_ntfy_updatectl(&client, &title, &message, None).await {
+            log::warn!("Failed to send ntfy notification: {}", e);
+        }
+    });
+
+    (StatusCode::ACCEPTED, format!("OS autoremove started for {}", params.server))
+}
+
+async fn execute_os_clean_cache_for_server(server: &Server, ssh_key: Option<&str>) -> Result<String> {
+    use crate::executor::UpdatectlExecutor;
+
+    let executor = RemoteExecutor::new(server.clone(), ssh_key)?;
+    let pm = executor.detect_package_manager().await?;
+    let pm_binary = pm.binary();
+
+    let output = executor.execute_command(
+        "/usr/bin/sudo",
+        &[pm_binary, "clean", "all"]
+    ).await?;
+
+    Ok(format!("Package cache cleaned ({} clean all)", pm_binary))
+}
+
+async fn execute_os_autoremove_for_server(server: &Server, ssh_key: Option<&str>) -> Result<String> {
+    use crate::executor::UpdatectlExecutor;
+
+    let executor = RemoteExecutor::new(server.clone(), ssh_key)?;
+    let pm = executor.detect_package_manager().await?;
+    let pm_binary = pm.binary();
+
+    let output = executor.execute_command(
+        "/usr/bin/sudo",
+        &[pm_binary, "autoremove", "-y"]
+    ).await?;
+
+    // Parse output to count removed packages
+    let removed_count = output.lines()
+        .filter(|line| line.contains("Removing") || line.contains("removed"))
+        .count();
+
+    if removed_count > 0 {
+        Ok(format!("Removed {} unused packages", removed_count))
+    } else {
+        Ok("No unused packages to remove".to_string())
     }
 }

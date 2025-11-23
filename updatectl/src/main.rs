@@ -14,6 +14,19 @@ mod remote_cleanup;
 use types::Server;
 use updater::{update_os, update_docker};
 
+/// Result from executing an update/cleanup operation on a server
+#[derive(Debug)]
+struct UpdateResult {
+    /// Human-readable report string
+    report: String,
+    /// Server that was updated
+    server: Server,
+    /// Docker cleanup report (if CleanDocker command was executed)
+    docker_cleanup_report: Option<cleanup::CleanupReport>,
+    /// OS cleanup operations (if CleanOs command was executed)
+    os_cleanup_operations: Option<String>,
+}
+
 /// Update control tool - apply OS and Docker updates across multiple servers
 #[derive(Parser, Debug)]
 #[command(name = "updatectl")]
@@ -291,30 +304,48 @@ async fn main() -> Result<()> {
         }
 
         let task = tokio::spawn(async move {
-            match execute_update(&server, &command, dry_run, ssh_key_clone.as_deref()).await {
-                Ok(report) => report,
-                Err(e) => {
-                    error!(server = %server.name, error = %e, "Error updating server");
-                    format!("❌ {} - Error: {}", server.name, e)
-                }
-            }
+            execute_update(&server, &command, dry_run, ssh_key_clone.as_deref()).await
         });
 
         tasks.push(task);
     }
 
     // Wait for all tasks to complete
-    let mut all_reports = Vec::new();
+    let mut all_results = Vec::new();
     for task in tasks {
         match task.await {
-            Ok(report) => all_reports.push(report),
+            Ok(Ok(result)) => all_results.push(result),
+            Ok(Err(e)) => {
+                error!(error = %e, "Error executing update");
+            }
             Err(e) => {
                 error!(error = %e, "Task join error");
             }
         }
     }
 
-    // Format and send notification
+    // Send per-server ntfy notifications for cleanup operations
+    let threshold_mb = std::env::var("CLEANUP_NOTIFY_THRESHOLD_MB")
+        .ok()
+        .and_then(|s| s.parse::<u64>().ok())
+        .unwrap_or(100);
+
+    for result in &all_results {
+        // Send Docker cleanup notification if applicable
+        if let Some(docker_report) = &result.docker_cleanup_report {
+            send_docker_cleanup_ntfy(&client, &result.server, docker_report, threshold_mb).await;
+        }
+
+        // Send OS cleanup notification if applicable
+        if let Some(os_ops) = &result.os_cleanup_operations {
+            send_os_cleanup_ntfy(&client, &result.server, os_ops).await;
+        }
+    }
+
+    // Collect report strings for summary notification
+    let all_reports: Vec<String> = all_results.iter().map(|r| r.report.clone()).collect();
+
+    // Format and send summary notification
     let summary = format_summary(&all_reports, args.dry_run);
     let details = all_reports.join("\n\n");
 
@@ -327,7 +358,7 @@ async fn main() -> Result<()> {
         error!(error = %e, "Gotify send error");
     }
 
-    // Send to ntfy.sh (if configured)
+    // Send to ntfy.sh (summary notification - if configured)
     if let Err(e) = send_ntfy_updatectl(&client, &summary, &details, None).await {
         error!(error = %e, "ntfy send error");
     }
@@ -340,7 +371,7 @@ async fn execute_update(
     command: &Commands,
     dry_run: bool,
     ssh_key: Option<&str>,
-) -> Result<String> {
+) -> Result<UpdateResult> {
     use common::RemoteExecutor;
     use crate::executor::UpdatectlExecutor;
 
@@ -349,6 +380,9 @@ async fn execute_update(
 
     let prefix = if dry_run { "[DRY-RUN] " } else { "" };
     report_lines.push(format!("{}🖥️  {} ({})", prefix, server.name, server.display_host()));
+
+    let mut docker_cleanup_report = None;
+    let mut os_cleanup_operations = None;
 
     match command {
         Commands::Os => {
@@ -367,12 +401,25 @@ async fn execute_update(
             report_lines.push(format!("   Docker Updates: {}", docker_result));
         }
         Commands::CleanDocker { profile, execute } => {
-            let result = clean_docker(server, &executor, profile, *execute, ssh_key).await?;
+            let (result, report) = clean_docker(server, &executor, profile, *execute, ssh_key).await?;
             report_lines.push(result);
+            docker_cleanup_report = report;
         }
         Commands::CleanOs { cache, autoremove, all, execute } => {
             let result = clean_os(&executor, *cache, *autoremove, *all, *execute, dry_run).await?;
-            report_lines.push(result);
+            report_lines.push(result.clone());
+
+            // Build operations string for notification
+            let mut ops = Vec::new();
+            if *all {
+                ops.push("package cache + autoremove");
+            } else {
+                if *cache { ops.push("package cache"); }
+                if *autoremove { ops.push("autoremove"); }
+            }
+            if !ops.is_empty() && !execute {
+                os_cleanup_operations = Some(ops.join(", "));
+            }
         }
         Commands::List { .. } => {
             // Already handled early - this shouldn't be reached
@@ -384,7 +431,12 @@ async fn execute_update(
         }
     }
 
-    Ok(report_lines.join("\n"))
+    Ok(UpdateResult {
+        report: report_lines.join("\n"),
+        server: server.clone(),
+        docker_cleanup_report,
+        os_cleanup_operations,
+    })
 }
 
 /// Execute Docker cleanup on a server
@@ -394,7 +446,7 @@ async fn clean_docker(
     profile_str: &str,
     execute: bool,
     ssh_key: Option<&str>,
-) -> Result<String> {
+) -> Result<(String, Option<cleanup::CleanupReport>)> {
     use cleanup::profiles::CleanupProfile;
 
     // Parse cleanup profile
@@ -404,7 +456,7 @@ async fn clean_docker(
     let mut lines = Vec::new();
     lines.push(format!("   Docker Cleanup ({:?} profile):", profile));
 
-    if server.is_local() {
+    let report = if server.is_local() {
         // Local cleanup using Bollard API
         let docker = bollard::Docker::connect_with_unix_defaults()?;
 
@@ -421,6 +473,8 @@ async fn clean_docker(
         } else {
             lines.push("     (Analysis only - use --execute to clean)".to_string());
         }
+
+        Some(report)
     } else {
         // Remote cleanup using SSH + Docker CLI
         let remote_executor = common::RemoteExecutor::new(server.clone(), ssh_key)?;
@@ -438,9 +492,11 @@ async fn clean_docker(
         } else {
             lines.push("     (Analysis only - use --execute to clean)".to_string());
         }
-    }
 
-    Ok(lines.join("\n"))
+        Some(report)
+    };
+
+    Ok((lines.join("\n"), report))
 }
 
 /// Execute OS cleanup on a server
@@ -630,4 +686,134 @@ fn format_summary(reports: &[String], dry_run: bool) -> String {
     } else {
         format!("{}✅ Updates completed successfully ({} servers)", prefix, server_count)
     }
+}
+
+/// Send per-server ntfy notification for Docker cleanup opportunities
+async fn send_docker_cleanup_ntfy(
+    client: &reqwest::Client,
+    server: &Server,
+    report: &cleanup::CleanupReport,
+    threshold_mb: u64,
+) {
+    // Skip if below threshold
+    let reclaimable_mb = report.total_reclaimable_bytes / (1024 * 1024);
+    if reclaimable_mb < threshold_mb {
+        return;
+    }
+
+    let webhook_url = std::env::var("UPDATECTL_WEBHOOK_URL")
+        .unwrap_or_else(|_| "http://updatectl_webhook:8080".to_string());
+    let webhook_secret = std::env::var("UPDATECTL_WEBHOOK_SECRET")
+        .unwrap_or_default();
+
+    if webhook_secret.is_empty() {
+        return;
+    }
+
+    let title = format!("{} - Docker Cleanup Available (~{} MB)",
+        server.name, reclaimable_mb);
+
+    let mut message_parts = Vec::new();
+
+    if report.dangling_images.count > 0 {
+        message_parts.push(format!("**Dangling images:** {} (~{} MB)",
+            report.dangling_images.count,
+            report.dangling_images.total_size_bytes / (1024 * 1024)));
+    }
+
+    if report.unused_images.count > 0 {
+        message_parts.push(format!("**Unused images:** {} (~{} MB)",
+            report.unused_images.count,
+            report.unused_images.total_size_bytes / (1024 * 1024)));
+    }
+
+    if report.stopped_containers.count > 0 {
+        message_parts.push(format!("**Stopped containers:** {}", report.stopped_containers.count));
+    }
+
+    if report.unused_networks.count > 0 {
+        message_parts.push(format!("**Unused networks:** {}", report.unused_networks.count));
+    }
+
+    if report.build_cache.reclaimable_bytes > 0 {
+        message_parts.push(format!("**Build cache:** ~{} MB",
+            report.build_cache.reclaimable_bytes / (1024 * 1024)));
+    }
+
+    let message = message_parts.join("\n");
+
+    // Generate action buttons
+    let actions = generate_docker_cleanup_actions(&server.name, &webhook_url, &webhook_secret);
+
+    if let Err(e) = send_ntfy_updatectl(client, &title, &message, Some(actions)).await {
+        error!(server = %server.name, error = %e, "Failed to send Docker cleanup ntfy notification");
+    }
+}
+
+/// Send per-server ntfy notification for OS cleanup opportunities
+async fn send_os_cleanup_ntfy(
+    client: &reqwest::Client,
+    server: &Server,
+    operations: &str,
+) {
+    let webhook_url = std::env::var("UPDATECTL_WEBHOOK_URL")
+        .unwrap_or_else(|_| "http://updatectl_webhook:8080".to_string());
+    let webhook_secret = std::env::var("UPDATECTL_WEBHOOK_SECRET")
+        .unwrap_or_default();
+
+    if webhook_secret.is_empty() {
+        return;
+    }
+
+    let title = format!("{} - OS Cleanup Available", server.name);
+    let message = format!("**Available operations:** {}", operations);
+
+    // Generate action buttons for OS cleanup
+    let actions = generate_os_cleanup_actions(&server.name, &webhook_url, &webhook_secret);
+
+    if let Err(e) = send_ntfy_updatectl(client, &title, &message, Some(actions)).await {
+        error!(server = %server.name, error = %e, "Failed to send OS cleanup ntfy notification");
+    }
+}
+
+/// Generate ntfy action buttons for Docker cleanup
+fn generate_docker_cleanup_actions(server_name: &str, webhook_url: &str, webhook_secret: &str) -> Vec<common::NtfyAction> {
+    use common::NtfyAction;
+
+    let server_name_encoded = urlencoding::encode(server_name);
+    let token_encoded = urlencoding::encode(webhook_secret);
+
+    vec![
+        NtfyAction::http_post(
+            "🧹 Safe Cleanup",
+            &format!("{}/webhook/cleanup/safe?server={}&token={}",
+                webhook_url, server_name_encoded, token_encoded)
+        ),
+        NtfyAction::http_post(
+            "🗑️ Prune Unused",
+            &format!("{}/webhook/cleanup/images/prune-unused?server={}&token={}",
+                webhook_url, server_name_encoded, token_encoded)
+        ),
+    ]
+}
+
+/// Generate ntfy action buttons for OS cleanup
+fn generate_os_cleanup_actions(server_name: &str, webhook_url: &str, webhook_secret: &str) -> Vec<common::NtfyAction> {
+    use common::NtfyAction;
+
+    let server_name_encoded = urlencoding::encode(server_name);
+    let token_encoded = urlencoding::encode(webhook_secret);
+
+    vec![
+        NtfyAction::http_post(
+            "🧹 Clean Cache",
+            &format!("{}/webhook/os/clean-cache?server={}&token={}",
+                webhook_url, server_name_encoded, token_encoded)
+        ),
+        NtfyAction::http_post(
+            "📦 Autoremove",
+            &format!("{}/webhook/os/autoremove?server={}&token={}",
+                webhook_url, server_name_encoded, token_encoded)
+        ),
+    ]
 }
