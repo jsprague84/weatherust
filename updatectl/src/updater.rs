@@ -25,17 +25,18 @@ pub async fn update_os(executor: &RemoteExecutor, dry_run: bool) -> Result<Strin
     match pm {
         PackageManager::Apt => {
             // Update package lists
+            // Check if running as root (uid 0) to avoid unnecessary sudo
             executor.execute_command(
-                "/usr/bin/sudo",
-                &["apt-get", "update", "-qq"]
+                "sh",
+                &["-c", r#"if [ "$(id -u)" = "0" ]; then apt-get update -qq; else sudo apt-get update -qq; fi"#]
             ).await?;
 
             // Full upgrade (handles new dependencies and removals)
             // Uses full-upgrade instead of upgrade to match what updatemon detects
-            // Use sh -c to properly handle DEBIAN_FRONTEND environment variable
+            // Use sh -c to properly handle DEBIAN_FRONTEND and check if root
             executor.execute_command(
                 "sh",
-                &["-c", "DEBIAN_FRONTEND=noninteractive /usr/bin/sudo apt-get full-upgrade -y"]
+                &["-c", r#"if [ "$(id -u)" = "0" ]; then DEBIAN_FRONTEND=noninteractive apt-get full-upgrade -y; else DEBIAN_FRONTEND=noninteractive sudo apt-get full-upgrade -y; fi"#]
             ).await?;
         }
         PackageManager::Dnf => {

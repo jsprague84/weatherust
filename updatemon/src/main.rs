@@ -164,8 +164,16 @@ async fn main() -> Result<()> {
         error!(error = %e, "Failed to send Gotify notification");
     }
 
-    // Send to ntfy.sh (if configured) with action buttons - one notification per server
-    send_ntfy_per_server(&client, &all_reports, &servers).await;
+    // Send to ntfy.sh (if configured)
+    if args.summary {
+        // Summary mode: send single table message to ntfy (no action buttons)
+        if let Err(e) = send_ntfy_updatemon(&client, &summary, notification_body, None).await {
+            error!(error = %e, "Failed to send ntfy notification");
+        }
+    } else {
+        // Detailed mode: send per-server notifications with action buttons
+        send_ntfy_per_server(&client, &all_reports, &servers).await;
+    }
 
     Ok(())
 }
