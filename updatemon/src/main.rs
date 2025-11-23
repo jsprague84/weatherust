@@ -414,68 +414,92 @@ fn parse_report_summary(report: &str, server: &Server) -> ServerSummary {
     }
 }
 
-/// Format server summaries as a table
+/// Format server summaries as a compact table
 fn format_table(summaries: &[ServerSummary]) -> String {
-    // Calculate column widths
-    let name_width = summaries.iter()
-        .map(|s| s.name.len())
-        .max()
-        .unwrap_or(10)
-        .max("Server".len());
-
-    let os_width = summaries.iter()
-        .map(|s| s.os_status.len())
-        .max()
-        .unwrap_or(12)
-        .max("OS Updates".len());
-
-    let docker_width = summaries.iter()
-        .map(|s| s.docker_status.len())
-        .max()
-        .unwrap_or(14)
-        .max("Docker Updates".len());
-
-    let notes_width = summaries.iter()
-        .map(|s| s.notes.len())
-        .max()
-        .unwrap_or(5)
-        .max("Notes".len());
-
     let mut output = String::new();
 
-    // Header
-    output.push_str(&format!(
-        "{:<name_width$} | {:<os_width$} | {:<docker_width$} | {:<notes_width$}\n",
-        "Server", "OS Updates", "Docker Updates", "Notes",
-        name_width = name_width,
-        os_width = os_width,
-        docker_width = docker_width,
-        notes_width = notes_width
-    ));
+    // Compact header
+    output.push_str("📊 Infrastructure Update Summary\n");
+    output.push_str("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n");
 
-    // Separator
-    output.push_str(&format!(
-        "{:-<name_width$}-|-{:-<os_width$}-|-{:-<docker_width$}-|-{:-<notes_width$}\n",
-        "", "", "", "",
-        name_width = name_width,
-        os_width = os_width,
-        docker_width = docker_width,
-        notes_width = notes_width
-    ));
+    // Group servers by category for better organization
+    let mut local_servers = Vec::new();
+    let mut cloud_servers = Vec::new();
+    let mut proxmox_servers = Vec::new();
+    let mut other_servers = Vec::new();
 
-    // Rows
     for summary in summaries {
-        output.push_str(&format!(
-            "{:<name_width$} | {:<os_width$} | {:<docker_width$} | {:<notes_width$}\n",
-            summary.name,
-            summary.os_status,
-            summary.docker_status,
-            summary.notes,
-            name_width = name_width,
-            os_width = os_width,
-            docker_width = docker_width,
-            notes_width = notes_width
-        ));
+        if summary.notes == "Local server" {
+            local_servers.push(summary);
+        } else if summary.notes == "Oracle Cloud" {
+            cloud_servers.push(summary);
+        } else if summary.notes == "Proxmox VE" {
+            proxmox_servers.push(summary);
+        } else {
+            other_servers.push(summary);
+        }
+    }
+
+    // Helper function to format server line
+    let format_server = |s: &&ServerSummary| -> String {
+        let os_short = if s.os_status.contains("✅") {
+            "✅".to_string()
+        } else if s.os_status.contains("📦") {
+            // Extract number (e.g., "📦 12 available" -> "📦12")
+            s.os_status.split_whitespace()
+                .nth(1)
+                .map(|n| format!("📦{}", n))
+                .unwrap_or_else(|| "📦?".to_string())
+        } else {
+            "N/A".to_string()
+        };
+
+        let docker_short = if s.docker_status == "No Docker" {
+            "-".to_string()
+        } else if s.docker_status.contains("✅") {
+            "✅".to_string()
+        } else {
+            s.docker_status.replace("🐳 ", "🐳")
+        };
+
+        format!("  {:12} OS:{:6} Docker:{}", s.name, os_short, docker_short)
+    };
+
+    // Output servers by category
+    if !local_servers.is_empty() {
+        output.push_str("Local:\n");
+        for server in local_servers {
+            output.push_str(&format_server(&server));
+            output.push('\n');
+        }
+        output.push('\n');
+    }
+
+    if !cloud_servers.is_empty() {
+        output.push_str("Cloud:\n");
+        for server in cloud_servers {
+            output.push_str(&format_server(&server));
+            output.push('\n');
+        }
+        output.push('\n');
+    }
+
+    if !proxmox_servers.is_empty() {
+        output.push_str("Proxmox:\n");
+        for server in proxmox_servers {
+            output.push_str(&format_server(&server));
+            output.push('\n');
+        }
+        output.push('\n');
+    }
+
+    if !other_servers.is_empty() {
+        output.push_str("Other:\n");
+        for server in other_servers {
+            output.push_str(&format_server(&server));
+            output.push('\n');
+        }
+        output.push('\n');
     }
 
     // Calculate totals
@@ -505,9 +529,9 @@ fn format_table(summaries: &[ServerSummary]) -> String {
         .sum();
 
     // Footer with totals
-    output.push('\n');
+    output.push_str("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n");
     output.push_str(&format!(
-        "Total: {} servers, {} packages pending, {} Docker images\n",
+        "📊 {} servers | 📦 {} packages | 🐳 {} images\n",
         total_servers, total_os_updates, total_docker_images
     ));
 
