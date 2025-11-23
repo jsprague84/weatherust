@@ -32,9 +32,10 @@ pub async fn update_os(executor: &RemoteExecutor, dry_run: bool) -> Result<Strin
 
             // Full upgrade (handles new dependencies and removals)
             // Uses full-upgrade instead of upgrade to match what updatemon detects
+            // Use sh -c to properly handle DEBIAN_FRONTEND environment variable
             executor.execute_command(
-                "/usr/bin/sudo",
-                &["DEBIAN_FRONTEND=noninteractive", "apt-get", "full-upgrade", "-y"]
+                "sh",
+                &["-c", "DEBIAN_FRONTEND=noninteractive /usr/bin/sudo apt-get full-upgrade -y"]
             ).await?;
         }
         PackageManager::Dnf => {

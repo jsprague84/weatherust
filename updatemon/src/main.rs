@@ -135,14 +135,20 @@ async fn main() -> Result<()> {
     let summary = format_summary(&all_reports);
     let details = all_reports.join("\n\n");
 
+    // Prepare table format if summary mode is enabled
+    let table_output = if args.summary {
+        let summaries: Vec<ServerSummary> = all_reports.iter()
+            .zip(servers.iter())
+            .map(|(report, server)| parse_report_summary(report, server))
+            .collect();
+        Some(format_table(&summaries))
+    } else {
+        None
+    };
+
     if !args.quiet {
-        if args.summary {
+        if let Some(ref table) = table_output {
             // Display table format
-            let summaries: Vec<ServerSummary> = all_reports.iter()
-                .zip(servers.iter())
-                .map(|(report, server)| parse_report_summary(report, server))
-                .collect();
-            let table = format_table(&summaries);
             println!("\n{}", table);
         } else {
             // Display detailed format
@@ -150,8 +156,11 @@ async fn main() -> Result<()> {
         }
     }
 
-    // Send to Gotify (if configured) - full details
-    if let Err(e) = send_gotify_updatemon(&client, &summary, &details).await {
+    // Send notifications - use table if summary mode, otherwise use details
+    let notification_body = table_output.as_ref().unwrap_or(&details);
+
+    // Send to Gotify (if configured)
+    if let Err(e) = send_gotify_updatemon(&client, &summary, notification_body).await {
         error!(error = %e, "Failed to send Gotify notification");
     }
 
